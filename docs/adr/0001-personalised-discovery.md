@@ -1,6 +1,6 @@
 # ADR-0001: Hibiki — personalised Nostr discovery as a standalone Torii napplet
 
-Date: 2026-10-26. Status: **Proposed**. Target first slice: v0.1.0 (preview card only).
+Date: 2026-10-26. Status: **Proposed**, revision 2 (reviewed 2026-10-26). Target first slice: v0.1.0 (preview card only). Licence: GPL-3.0-or-later, matching Continuum, Plebeian Market, Quest and Suite.
 
 ## Context
 
@@ -33,6 +33,9 @@ This is the main privacy boundary, and it shouldn't change without a new ADR.
 
 The node sees which candidates it served. It does not see which ones the owner liked privately, lingered on or rejected.
 
+- **Bounded client work:** the browser ranks a pool of at most 500 candidates with compact features (ids, scores, a few topic terms, optional quantised vectors). Each refresh stays well under 200 KB, and ranking stays fast on a phone.
+- **Signer requirement:** sealing needs NIP-44 support in the owner's signer. If the signer lacks it, private signals stay in memory for that session only and are never sent to the node unsealed.
+
 ### 3. Candidate sources
 
 Every candidate passes the spam gate first. The pool then mixes:
@@ -52,7 +55,9 @@ Score = relevance + social proximity + peer quality − spam + freshness decay. 
 Each node publishes its own public judgements as NIP-85 assertions, signed by a dedicated feed service key, never the owner's key. Nodes choose which peers to read. Peer opinion is advisory and decays. See `docs/event-model.md`.
 
 - **Never transmitted:** taste profiles, private signals and peer-weight tables. They stay on the node.
-- **Peer evidence alone can only lower an item's rank.** Hiding needs local evidence (the owner's mutes or reports) or agreement from at least two peers run by different operators.
+- **A single peer can only lower an item's rank, never hide it.** Hiding needs local evidence (the owner's mutes or reports, or strong ingest evidence) or a quorum of at least two eligible peers run by different operators.
+- **No score laundering:** a node's published scores come only from its own evidence. Scores received from peers are never republished or mixed in, so opinions can't echo through the network.
+- **Negative claims are restrained:** a public spam score is a signed claim about a person. Nodes publish one only with strong local evidence, and owners can turn negative publication off.
 - **No peer dominates:** one peer's contribution is capped, and its weight drifts back toward zero unless the owner's own actions keep confirming it.
 
 This follows Torii Cooperation's three tests: opt in and out at will, signed and verifiable, and locally interpreted.
@@ -63,14 +68,15 @@ FIPS helps node-to-node exchange: assertion sync and candidate fetches between p
 
 ### 7. Shared-relay boundary
 
-In v1, spam filtering happens in the feed service's ingest path, not in the shared node relay's write policy. That relay also serves Plebeian Market and Quest presence, so changing its write policy needs a separate ADR.
+In P0–P3, spam filtering happens in the feed service's ingest path, and the shared node relay's write policy is unchanged. That relay also serves Plebeian Market and Quest presence. P4 needs one additive rule: accept kinds 30382/30383 from this node's bound service keys. That rule ships under a separate Torii Suite ADR. Hibiki never adds rejection rules to the shared relay.
 
 ## Consequences
 
 - No Continuum, Quest or Base code changes are needed to start. Base registration is reused as is.
 - The node needs a small always-on service (planned from v0.2). Embeddings are optional and gated on host capacity. v1 runs without an ML model.
 - A new long-lived key (the feed service key) is introduced. It is bound to the owner by a signed declaration and can be revoked.
-- Media in notes can leak the reader's IP to third-party hosts. Media is click-to-load by default, with an optional node media proxy later.
+- Media in notes, **and profile pictures and banners**, can leak the reader's IP to third-party hosts. They are click-to-load by default, with an optional node media proxy later. The napplet never fetches media itself: the shell hands it already-approved blob URLs, so the napplet's network-denying CSP holds.
+- v1 targets single-owner nodes. Shared or team nodes need per-person service keys and permission rules first.
 - Quality depends on how many independent nodes participate. A single node still works: circle, taste neighbours and exploration need no peers.
 
 ## Alternatives considered
@@ -84,6 +90,6 @@ In v1, spam filtering happens in the feed service's ingest path, not in the shar
 ## Open questions
 
 1. ~~Final product name and route slug.~~ Resolved 2026-10-26: **Hibiki** (響, resonance), route `/hibiki/`, repo `ChiefmonkeyArt/torii-hibiki`. An unrelated self-hosted social-content tool also uses the name Hibiki; keep "Torii Hibiki" in descriptions where it might be confused.
-2. Licence for the public repository.
+2. ~~Licence for the public repository.~~ Resolved 2026-10-26: GPL-3.0-or-later.
 3. Exact owner→node-key binding: reuse the node-relay binding event if one is finalised, otherwise the NIP-78 binding in `docs/event-model.md`.
 4. Whether `nap-torii-feed@1` should be filed with the shared NAP registry once v0.3 proves it.

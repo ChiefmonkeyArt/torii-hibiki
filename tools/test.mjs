@@ -44,6 +44,10 @@ t('installer is fragment-first and rolls back on nginx -t failure', () => {
   assert.ok(/nginx -t/.test(sh) && /rolled back/.test(sh));
   assert.ok(sh.startsWith('#!/usr/bin/env bash') && /set -euo pipefail/.test(sh));
 });
+t('GPL-3.0 licence present and declared', () => {
+  assert.match(read('LICENSE'), /GNU GENERAL PUBLIC LICENSE\s+Version 3/);
+  assert.equal(pkg.license, 'GPL-3.0-or-later');
+});
 t('event model adds no new kinds', () => {
   const em = read('docs/event-model.md');
   const kinds = new Set([...em.matchAll(/"kind":\s*(\d+)/g)].map((m) => Number(m[1])));
