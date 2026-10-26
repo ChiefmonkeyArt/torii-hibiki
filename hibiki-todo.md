@@ -5,7 +5,8 @@
 ### Active tasks
 
 - **HIBIKI-P0 (v0.1.0):** preview page, launcher card, ADR-0001, event model and roadmap. Remaining: the owner runs the install command on the VPS, then verifies the card and `/hibiki/` live.
-- **HIBIKI-ADR-REVIEW:** the owner reviews ADR-0001 and the event model, then marks them Accepted or requests changes. Nothing past P0 starts before then.
+- **HIBIKI-ADR-ACCEPT:** revision 2 incorporates the 2026-10-26 review. The owner marks ADR-0001 and the event model Accepted or requests changes. Nothing past P0 starts before then.
+- **HIBIKI-P4-RELAY-ADR (later):** a Torii Suite ADR for the additive relay write rule (accept 30382/30383 from bound service keys) before P4.
 
 ### Next (P1, v0.2.x) — Circle feed
 
@@ -16,5 +17,4 @@
 ### Backlog
 
 - P2 private taste · P3 optional embeddings · P4 publish assertions · P5 peer cooperation + FIPS · P6 mounts/interop (see `docs/roadmap.md`).
-- Choose the repository licence.
 - Align the owner→node binding with the node-relay binding if it is finalised first.

@@ -34,3 +34,7 @@ To remove it: `sudo torii unregister hibiki && sudo rm -f /opt/torii/nginx-fragm
 ```bash
 npm test
 ```
+
+## Licence
+
+GPL-3.0-or-later, matching Torii Continuum, Torii Quest, Torii Suite and Plebeian Market. See [LICENSE](LICENSE).
