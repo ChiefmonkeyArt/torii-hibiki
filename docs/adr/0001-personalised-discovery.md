@@ -1,6 +1,6 @@
 # ADR-0001: Hibiki — personalised Nostr discovery as a standalone Torii napplet
 
-Date: 2026-10-26. Status: **Proposed**, revision 2 (reviewed 2026-10-26). Target first slice: v0.1.0 (preview card only). Licence: GPL-3.0-or-later, matching Continuum, Plebeian Market, Quest and Suite.
+Date: 2026-10-26. Status: **Proposed**, revision 2 (reviewed 2026-10-26). Target first slice: v0.1.0 (preview card only). Revision 3 adds Applesauce and makes FIPS the preferred node path. Licence: GPL-3.0-or-later, matching Continuum, Plebeian Market, Quest and Suite.
 
 ## Context
 
@@ -62,13 +62,44 @@ Each node publishes its own public judgements as NIP-85 assertions, signed by a 
 
 This follows Torii Cooperation's three tests: opt in and out at will, signed and verifiable, and locally interpreted.
 
-### 6. FIPS is optional transport
+### 6. FIPS is the preferred node-to-node path
 
-FIPS helps node-to-node exchange: assertion sync and candidate fetches between peers behind NAT or without a domain. The feed service uses it when both nodes run it and falls back to `wss://` relays otherwise. Browsers never run FIPS, and keys never pass through it. Relays remain the baseline. The feature must work with no FIPS at all.
+FIPS is Torii's founding-layer transport (Quest ADR-0111). Hibiki uses it **by default wherever both ends support it**, and falls back automatically to `wss://`/HTTPS everywhere else.
+
+| Link | Path | Why |
+|---|---|---|
+| Node ↔ peer node: assertion sync, peer relay reads, candidate fetches | **FIPS first**, `wss://` fallback | Works behind NAT, with dynamic IPs and with no domain, so home nodes can be full peers |
+| Owner's devices ↔ own node | HTTPS today; FIPS from mobile clients when the mobile path (fips2go/Capacitor) is ready | Browsers can't run FIPS yet (staged per the founding stack) |
+| Node ↔ ordinary public Nostr relays and image hosts | `wss://`/HTTPS only | They aren't on FIPS |
+
+- **Layering:** FIPS sits under the relay connection. The Applesauce relay pool (section 8) connects to a peer's relay through the local FIPS daemon exactly as it would over `wss://`. Signed events are verified the same way on both paths, so FIPS adds reachability, not trust.
+- **Keys:** keys never pass through FIPS, and browsers never run a FIPS daemon.
+- **Without FIPS:** the feature must still work with no FIPS at all.
+- **Measured:** P5 records FIPS vs `wss://` latency, success rate and bandwidth per peer.
 
 ### 7. Shared-relay boundary
 
 In P0–P3, spam filtering happens in the feed service's ingest path, and the shared node relay's write policy is unchanged. That relay also serves Plebeian Market and Quest presence. P4 needs one additive rule: accept kinds 30382/30383 from this node's bound service keys. That rule ships under a separate Torii Suite ADR. Hibiki never adds rejection rules to the shared relay.
+
+### 8. Applesauce is the Nostr client layer
+
+Hibiki uses [Applesauce](https://github.com/hzrd149/applesauce) v7 (MIT, GPL-compatible) for relay and event plumbing in both the trusted shell (browser) and the feed service (Node), instead of hand-rolled WebSocket code. Quest's gateway already adopted it under ADR-0140, with measured speed gains and an enforced size budget.
+
+| Need | Applesauce package |
+|---|---|
+| Pooled relay connections, NIP-42 auth, streaming with "relay failed" vs "nothing found" | `applesauce-relay` |
+| Shared event store, NIP-65 outbox routing | `applesauce-core` |
+| Follow graph to N hops, timelines, reactions and zaps for taste neighbours | `applesauce-loaders` (`social-graph`, `timeline`, `reactions`, `zaps`) |
+| NIP-85 trusted assertions and 10040 provider lists | `applesauce-common` (trusted-assertion helpers and casts, trusted-provider list factory), `applesauce-actions` |
+| Mutes, bookmarks and other lists | `applesauce-common` models |
+| Persistent event store on the node | `applesauce-sqlite` (better-sqlite3 backend) |
+| Parsing note content: links, media, mentions, for the image-proxy rewrite | `applesauce-content` (in the shell) |
+| NIP-07 / NIP-46 signing and NIP-44 sealing | `applesauce-signers`, `applesauce-accounts` (shell only, never the service) |
+
+- **Trust stays ours:** Applesauce only fetches, stores and parses. Hibiki's own checks still run on every event: mutual service bindings, quorum rules, the no-laundering rule and consent gates.
+- **The napplet doesn't bundle Applesauce:** it has no network access, so it receives snapshots from the shell. That keeps it small.
+- **Pinned and wrapped:** exact versions, matching Quest's pins where they overlap, behind one thin adapter file each in the shell and the service, so a major upstream release costs one file.
+- **Size budget, enforced in tests:** shell Applesauce chunks ≤ 60 KB gzip (Quest measured 52 KB). Napplet bundle ≤ 150 KB gzip, with Applesauce excluded.
 
 ## Consequences
 

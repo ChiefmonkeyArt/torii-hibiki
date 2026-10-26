@@ -11,3 +11,5 @@ Living document.
 **Cooperation:** nodes publish signed NIP-85 assertions from dedicated feed service keys bound to the owner. Peer evidence alone can only downrank. Hiding needs local evidence or a two-operator quorum. Peer weights are capped, learned and decaying. FIPS is an optional transport.
 
 **Footprint:** no ML model is required through P2. Optional embeddings are gated on host capacity and must prove a measured gain.
+
+**Plumbing (2026-10-26):** Applesauce v7 is the Nostr client layer in the shell and the service, matching Quest ADR-0140. FIPS is the default node-to-node route wherever both ends support it, with relays/HTTPS as the universal fallback.
