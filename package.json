@@ -1,0 +1,9 @@
+{
+  "name": "torii-hibiki",
+  "version": "0.1.0",
+  "description": "Hibiki — personal Nostr discovery feed, a standalone Torii napplet.",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "scripts": { "test": "node tools/test.mjs" }
+}
