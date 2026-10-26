@@ -12,7 +12,7 @@
 
 - Host shell + sandboxed napplet (`srcdoc`, `allow-scripts`, network-denying CSP); NIP-07 sign-in.
 - Loopback feed service (systemd, memory cap): own relay + NIP-65 outbox reads, follows + 2-hop WoT, ingest spam features, quarantine bucket.
-- "Why am I seeing this" chips; click-to-load media; `textContent`-only rendering.
+- "Why am I seeing this" chips; same-origin image proxy (auto-load thumbnails, SSRF-safe, bounded cache; video tap-to-play); `textContent`-only rendering.
 
 ### Backlog
 

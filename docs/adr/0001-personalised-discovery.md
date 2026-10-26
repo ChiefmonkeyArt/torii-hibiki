@@ -75,7 +75,15 @@ In P0–P3, spam filtering happens in the feed service's ingest path, and the sh
 - No Continuum, Quest or Base code changes are needed to start. Base registration is reused as is.
 - The node needs a small always-on service (planned from v0.2). Embeddings are optional and gated on host capacity. v1 runs without an ML model.
 - A new long-lived key (the feed service key) is introduced. It is bound to the owner by a signed declaration and can be revoked.
-- Media in notes, **and profile pictures and banners**, can leak the reader's IP to third-party hosts. They are click-to-load by default, with an optional node media proxy later. The napplet never fetches media itself: the shell hands it already-approved blob URLs, so the napplet's network-denying CSP holds.
+- **Media goes through the node, loads automatically.** Avatars, banners and images in notes point at arbitrary third-party hosts. A direct browser fetch reveals the reader's IP and viewing time to whoever runs that host, so a hostile avatar URL works like a tracking pixel. Instead, the feed service runs a same-origin image proxy, part of P1, not an optional extra. Images load automatically and outside hosts only ever see the VPS address. The proxy:
+  - Accepts only `https`. Refuses private, loopback and link-local addresses, re-checking after DNS and on redirects, to prevent SSRF.
+  - Accepts only raster images (JPEG, PNG, WebP, GIF, AVIF; no SVG), with an 8 MB input cap and 10 s timeout.
+  - Re-encodes to small WebP thumbnails (avatars 96/192 px, note images up to 1080 px wide), which also strips EXIF metadata.
+  - Keeps a bounded LRU disk cache (default 512 MB, owner-adjustable), keyed by a hash of the URL. Blossom blobs are verified against their hash.
+  - Serves only to the signed-in owner session, so it can't be used as an open proxy.
+- **Video and audio** are too heavy to proxy on a small VPS. They show a proxied poster frame and fetch the media directly only when tapped, with the source host named. This is the only click-to-load case.
+- **If the proxy is unavailable**, the feed shows generated identicons and image placeholders. It never falls back silently to direct third-party loads.
+- The napplet never fetches media itself. The shell hands it same-origin proxy URLs, so the napplet's network-denying CSP holds.
 - v1 targets single-owner nodes. Shared or team nodes need per-person service keys and permission rules first.
 - Quality depends on how many independent nodes participate. A single node still works: circle, taste neighbours and exploration need no peers.
 
