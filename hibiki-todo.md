@@ -11,7 +11,8 @@
 ### Next (P1, v0.2.x) — Circle feed
 
 - Host shell + sandboxed napplet (`srcdoc`, `allow-scripts`, network-denying CSP); NIP-07 sign-in.
-- Loopback feed service (systemd, memory cap): own relay + NIP-65 outbox reads, follows + 2-hop WoT, ingest spam features, quarantine bucket.
+- Applesauce v7 (pinned, thin adapter, size budget test) in the shell and the service.
+- Loopback feed service (systemd, memory cap, `applesauce-sqlite` store): own relay + NIP-65 outbox reads, follows + 2-hop WoT, ingest spam features, quarantine bucket.
 - "Why am I seeing this" chips; same-origin image proxy (auto-load thumbnails, SSRF-safe, bounded cache; video tap-to-play); `textContent`-only rendering.
 
 ### Backlog

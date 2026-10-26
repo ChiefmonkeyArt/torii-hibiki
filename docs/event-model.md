@@ -166,7 +166,8 @@ Feed service only; the shared relay's write policy is unchanged:
 ## 10. Transport
 
 - **Baseline:** publish assertions to the node's own relay. **This needs one additive write rule on the shared relay:** accept kinds 30382/30383 from this node's bound service keys. The relay also serves Plebeian Market and Quest, so the rule ships with P4 under a separate Torii Suite ADR and isn't assumed here. Peers subscribe with `{"kinds":[30382,30383],"authors":[<bound service keys>]}`, plus `since` for incremental sync.
-- **FIPS:** when both nodes advertise a `fips` tag in their binding, the feed service may sync over FIPS instead. It still uses the same signed events and runs the same verification, so the transport adds no trust of its own.
+- **FIPS first:** when both nodes are FIPS-reachable (an advertised `fips` tag, or an address exchanged privately), the feed service syncs over FIPS by default and falls back to `wss://` automatically. It's the same Applesauce subscription over a different route, with the same signed events and verification, so the transport adds no trust of its own.
+- **Client library:** subscriptions, the event store and NIP-85/10040 parsing use Applesauce (`applesauce-relay`, `applesauce-sqlite`, `applesauce-common`). See ADR-0001 section 8.
 - **Bounds:** limits per peer per hour, maximum events held per peer, and discard of assertions older than their binding.
 
 ## Validation rules (peer-side, all mandatory)
