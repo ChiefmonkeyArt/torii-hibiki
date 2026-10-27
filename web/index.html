@@ -1,62 +1,38 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'">
-<meta name="color-scheme" content="dark">
-<meta name="robots" content="noindex">
-<meta name="description" content="Hibiki — a personal Nostr discovery feed. Preview.">
-<title>Hibiki · Preview</title>
-<style>
-:root{--bg:#0b0d10;--card:#12161b;--fg:#e8ecef;--mute:#8b95a1;--accent:#d94f2c;--line:color-mix(in srgb,var(--fg) 12%,transparent)}
-*{box-sizing:border-box}
-html,body{margin:0}
-body{background:var(--bg);background-image:radial-gradient(1200px 600px at 20% -10%,#2a1109 0%,transparent 60%);background-repeat:no-repeat;color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.55;min-height:100vh}
-.wrap{max-width:760px;margin:0 auto;padding:10vh 22px 64px}
-.eyebrow{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);font-weight:700}
-h1{font-size:clamp(32px,7vw,54px);line-height:1.05;letter-spacing:-.02em;margin:10px 0 14px;font-weight:800}
-.lede{font-size:clamp(16px,2.4vw,20px);color:var(--mute);margin:0 0 36px;max-width:56ch}
-.grid{display:grid;gap:12px;grid-template-columns:1fr}
-@media(min-width:600px){.grid{grid-template-columns:1fr 1fr}}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
-.card h2{font-size:16px;margin:0 0 6px}
-.card p{margin:0;color:var(--mute);font-size:14.5px}
-h3{font-size:14px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);margin:40px 0 12px}
-ol{margin:0;padding-left:20px;color:var(--mute)}
-ol li{margin:4px 0}
-ol li strong{color:var(--fg)}
-.now{color:var(--accent)}
-footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--line);font-size:12px;color:var(--mute);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
-footer a{color:var(--mute)}
-a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-</style>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<title>Hibiki</title>
+<link rel="stylesheet" href="hibiki.css">
+<link rel="stylesheet" href="shell.css">
+<script src="shell.js" defer></script>
 </head>
 <body>
-<main class="wrap">
-  <div class="eyebrow">Preview · not live yet</div>
-  <h1>Hibiki</h1>
-  <p class="lede">What resonates with you. Find people and posts on Nostr beyond your circle, tuned to your own taste and humour, with spam filtered out by nodes that cooperate.</p>
-
-  <div class="grid">
-    <section class="card"><h2>Beyond your follows</h2><p>Discovers "taste neighbours": strangers who enjoy the same things you do, not just friends of friends.</p></section>
-    <section class="card"><h2>Your taste stays yours</h2><p>Private signals are sealed in your browser. Your node only ever sees public data.</p></section>
-    <section class="card"><h2>You steer it</h2><p>Sliders for close or far, familiar or new, serious or playful. Every post shows why it's there.</p></section>
-    <section class="card"><h2>Nodes against spam</h2><p>Torii nodes share signed, advisory scores. No single peer can hide anything from you.</p></section>
-  </div>
-
-  <h3>Roadmap</h3>
-  <ol>
-    <li class="now"><strong>Preview card</strong> — you are here</li>
-    <li><strong>Circle feed</strong> — follows, friends of friends, spam gate, explanations</li>
-    <li><strong>Private taste</strong> — taste neighbours, sliders, exploration</li>
-    <li><strong>Optional local embeddings</strong> — only if your host has room</li>
-    <li><strong>Signed node scores</strong> — readable by any NIP-85 client</li>
-    <li><strong>Peer cooperation</strong> — weighted, decaying, optional FIPS</li>
-    <li><strong>Mount anywhere</strong> — Continuum, Quest and Torii DE</li>
-  </ol>
-
-  <footer><span>Hibiki v0.1.0 · a Torii napplet</span><a href="/">Back to apps</a></footer>
+<main id="gate" class="gate" hidden>
+  <section class="glass gate-card">
+    <div class="gate-mark k" aria-hidden="true">響</div>
+    <h1>Hibiki</h1>
+    <p class="lede">The best of Nostr from the people you follow: posts, news, video, music and long reads, gathered by your own node.</p>
+    <ul class="gate-points">
+      <li><b>Your circle first.</b> Original posts from people you follow, with replies tucked underneath.</li>
+      <li><b>Private by design.</b> Images and previews come through your node, so other servers never see your readers.</li>
+      <li><b>Your taste stays here.</b> Feed settings live in this browser. Nothing about them is published.</li>
+    </ul>
+    <div id="gate-action"></div>
+    <p class="m" id="gate-note"></p>
+  </section>
+  <footer class="m foot">Hibiki <span id="ver">v0.2.0</span> · GPL-3.0-or-later · <a href="https://github.com/ChiefmonkeyArt/torii-hibiki" rel="noopener noreferrer" target="_blank">source</a></footer>
 </main>
+<iframe id="app" title="Hibiki feed" src="napplet.html" sandbox="allow-scripts" allow="fullscreen" referrerpolicy="no-referrer" hidden></iframe>
+<dialog id="confirm" class="glass">
+  <h2 id="c-title">Publish?</h2>
+  <p class="m" id="c-sub">Your signer will ask you to sign this event. Nothing is sent until you approve.</p>
+  <pre id="c-body"></pre>
+  <div class="row"><span class="m" id="c-kind"></span><span><button class="btn" id="c-no" type="button">Cancel</button> <button class="btn p" id="c-yes" type="button">Sign and publish</button></span></div>
+</dialog>
 </body>
 </html>

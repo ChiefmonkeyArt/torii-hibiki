@@ -13,3 +13,5 @@ Living document.
 **Footprint:** no ML model is required through P2. Optional embeddings are gated on host capacity and must prove a measured gain.
 
 **Plumbing (2026-10-26):** Applesauce v7 is the Nostr client layer in the shell and the service, matching Quest ADR-0140. FIPS is the default node-to-node route wherever both ends support it, with relays/HTTPS as the universal fallback.
+
+**Content first (2026-10-27, ADR-0001 rev 4):** Hibiki is a curator of interesting and entertaining Nostr content from your circle and its news, across notes, pictures, video, audio, long reads and live streams. Social sections show original posts, not replies. The algorithm stays in the background: subtle, explainable on request, and beautiful to adjust. The Japanese for curator, 目利き (mekiki), names the curated picks in News.
