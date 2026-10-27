@@ -7,7 +7,8 @@ import { makeSigner } from '../src/signer.mjs';
 import { verifyNip98, checkPublish } from '../src/auth.mjs';
 import { chooseRelays, writeRelays } from '../src/ingest.mjs';
 import { parseOg } from '../src/proxy.mjs';
-import { Rank, spamScore } from '../src/feed.mjs';
+import { Rank, spamScore, orderReplies, replyScore } from '../src/feed.mjs';
+import { summarize, articleText, unent } from '../src/tldr.mjs';
 import { decodePubkey, loadConfig } from '../src/config.mjs';
 
 const ev = (o) => ({ kind: 1, tags: [], content: '', pubkey: 'a'.repeat(64), created_at: 1, id: 'f'.repeat(64), ...o });
@@ -149,4 +150,36 @@ test('config: owner as npub or hex, secret required, loopback only', () => {
   assert.equal(c.host, '127.0.0.1');
   assert.equal(c.primaryRelay, 'ws://127.0.0.1:7777');
   assert.equal(c.dev, false);
+});
+
+test('reply order: circle first, then popularity, then oldest', () => {
+  const r = (id, o) => ({ id, created_at: 100, circle: false, likes: 0, reposts: 0, replies: 0, zaps: 0, ...o });
+  const out = orderReplies([r('old', { created_at: 50 }), r('pop', { likes: 2, reposts: 1 }), r('friend', { circle: true }), r('chat', { replies: 2 }), r('new', { created_at: 200 })]);
+  assert.deepEqual(out.map((x) => x.id), ['friend', 'pop', 'chat', 'old', 'new']);
+  assert.ok(replyScore({ zaps: 1000 }) < replyScore({ likes: 4 }), 'zaps count on a log scale');
+});
+
+test('TL;DR: free extractive summary from article text', () => {
+  const para = (t) => `<p>${t}</p>`;
+  const body = [
+    'The Cornish town of Lostwithiel has opened a community workshop for repairing bicycles and small electronics.',
+    'Volunteers at the workshop fix around forty bicycles each month for local families.',
+    'Subscribe to our newsletter for more stories like this.',
+    'The workshop runs every Saturday morning in the old market hall near the river.',
+    'Organisers say the repair workshop has kept more than two tonnes of waste out of landfill this year.',
+    'Funding came from a small council grant and donations from residents.',
+    'Several other towns in Cornwall are now planning similar repair workshops of their own.',
+  ];
+  const html = `<html><nav><p>Home News Sport</p></nav><article>${body.map(para).join('')}${para('Second paragraph [12] repeats the workshop story about bicycles and repairs for local families in the town.')}</article></html>`;
+  const s = summarize(html.replace(/<\/article>/, body.map(para).join('') + '</article>'), 'Lostwithiel opens a repair workshop');
+  assert.ok(s, 'summary returned');
+  assert.ok(s.tldr.length >= 3 && s.tldr.length <= 4);
+  assert.ok(!s.tldr.some((t) => /newsletter/i.test(t)), 'boilerplate dropped');
+  assert.ok(!s.tldr.some((t) => /\[12\]/.test(t)), 'reference marks stripped');
+  assert.equal(new Set(s.tldr).size, s.tldr.length, 'no duplicate sentences');
+  assert.ok(s.minutes >= 1);
+  assert.equal(summarize('<p>Too short to summarise.</p>', 'x'), null, 'short pages get no TL;DR');
+  const ld = `<script type="application/ld+json">${JSON.stringify({ '@type': 'NewsArticle', articleBody: body.concat(body).join(' ') })}</script><p>Cookie banner text only.</p>`;
+  assert.match(articleText(ld).join(' '), /community workshop/, 'JSON-LD articleBody preferred');
+  assert.equal(unent('Fish &amp; chips &#8211; &quot;good&quot;'), 'Fish & chips \u2013 "good"');
 });

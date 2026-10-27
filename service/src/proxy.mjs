@@ -2,6 +2,7 @@
 // this node; upstream hosts see the node, never the reader.
 import { fetchBuffer, open, FetchError } from './safefetch.mjs';
 import { sniff } from './imaging.mjs';
+import { unent, summarize } from './tldr.mjs';
 
 const RASTER = /^image\/(jpeg|png|gif|webp|avif)/;
 const MEDIA = /^(video\/(mp4|webm|quicktime|x-m4v)|audio\/(mpeg|mp4|ogg|opus|wav|x-wav|flac|aac|webm|x-m4a))/;
@@ -55,12 +56,16 @@ export function makeProxies({ signer, cache, imager, log = () => {} }) {
 
   /** Link preview: title, description, site, image (signed), from OpenGraph. */
   async function link(url) {
-    const key = `link|${url}`;
+    const key = `link2|${url}`;
     const hit = await cache.get(key);
     if (hit) return JSON.parse(hit.toString());
-    const { body, type, url: final } = await fetchBuffer(url, { cap: 768 * 1024, accept: 'text/html,application/xhtml+xml' });
+    const { body, type, url: final } = await fetchBuffer(url, { cap: 1536 * 1024, accept: 'text/html,application/xhtml+xml' });
     if (!/text\/html|application\/xhtml/.test(type)) throw new FetchError('not html', 415);
-    const out = parseOg(body.toString('utf8'), final);
+    const html = body.toString('utf8');
+    const out = parseOg(html, final);
+    // Free extractive TL;DR from the page we already fetched (no AI, no third party).
+    const sum = summarize(html, out.title);
+    if (sum) { out.tldr = sum.tldr; out.readMinutes = out.readMinutes || sum.minutes; }
     out.image = out.image ? signer.img(out.image, 640) : null;
     await cache.put(key, Buffer.from(JSON.stringify(out)));
     return out;
@@ -69,11 +74,6 @@ export function makeProxies({ signer, cache, imager, log = () => {} }) {
   return { img, media, link };
 }
 
-const ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", '#39': "'", nbsp: ' ' };
-const unent = (s) => s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e) => {
-  if (e[0] === '#') { const n = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : Number(e.slice(1)); return n > 0 && n < 0x110000 ? String.fromCodePoint(n) : ''; }
-  return ENT[e.toLowerCase()] ?? m;
-});
 const clip = (s, n) => unent(String(s || '')).replace(/\s+/g, ' ').trim().slice(0, n);
 
 export function parseOg(html, base) {

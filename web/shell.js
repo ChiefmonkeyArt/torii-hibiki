@@ -81,20 +81,23 @@
         $('c-title').textContent = draft.title || 'Publish to Nostr?';
         $('c-body').textContent = draft.preview || draft.content || '';
         $('c-kind').textContent = 'kind ' + draft.kind + (draft.tags && draft.tags.length ? ' · ' + draft.tags.length + ' tags' : '');
-        var done = function (ok) { dlg.close(); $('c-yes').onclick = $('c-no').onclick = null; ok ? resolve() : reject(new Error('cancelled')); };
+        $('c-skip').hidden = draft.kind !== 7; $('c-skipbox').checked = false;
+        var done = function (ok) { if (ok && draft.kind === 7 && $('c-skipbox').checked) store.set('skip7', true); dlg.close(); $('c-yes').onclick = $('c-no').onclick = null; ok ? resolve() : reject(new Error('cancelled')); };
         $('c-yes').onclick = function () { done(true); };
         $('c-no').onclick = function () { done(false); };
         dlg.oncancel = function () { done(false); };
         dlg.showModal();
       });
     };
-    var p = confirmQ.then(run);
+    // Likes can skip this dialog once the owner opts out (re-enable on the Signal page).
+    var p = draft.kind === 7 && store.get('skip7', false) ? confirmQ : confirmQ.then(run);
     confirmQ = p.catch(function () {});
     return p.then(function () {
       return window.nostr.signEvent({ kind: draft.kind, created_at: Math.floor(Date.now() / 1000), tags: draft.tags || [], content: draft.content || '' });
     }).then(function (ev) { return call('publish', { method: 'POST', body: JSON.stringify(ev) }); });
   }
 
+  function init() { send('feed.init', { me: me, theme: theme(), tune: store.get('tune', null), onboarded: store.get('onboarded', false), askLikes: !store.get('skip7', false), version: me && me.version }); }
   var KINDS = { 1: 1, 6: 1, 7: 1, 10000: 1, 30004: 1, 30078: 1 };
   function onMessage(e) {
     if (e.source !== frame.contentWindow || !e.data || typeof e.data.type !== 'string') return;
@@ -102,7 +105,7 @@
     switch (m.type) {
       case 'feed.ready':
         ready = true;
-        send('feed.init', { me: me, theme: theme(), tune: store.get('tune', null), onboarded: store.get('onboarded', false), version: me && me.version });
+        init();
         break;
       case 'feed.query': reply(m.id, call('feed?section=' + encodeURIComponent(d.section || 'today'))); break;
       case 'feed.thread': if (/^[0-9a-f]{64}$/.test(d.id)) reply(m.id, call('thread/' + d.id + (d.live ? '?live=1' : ''))); break;
@@ -112,6 +115,7 @@
       case 'feed.status': reply(m.id, call('health')); break;
       case 'feed.sync': reply(m.id, call('sync', { method: 'POST' })); break;
       case 'feed.tune': store.set('tune', d.weights || null); break;
+      case 'feed.pref': if (typeof d.askLikes === 'boolean') store.set('skip7', !d.askLikes); break;
       case 'feed.onboarded': store.set('onboarded', true); break;
       case 'feed.settheme': store.set('theme', d.theme === 'dark' || d.theme === 'light' ? d.theme : 'auto'); send('feed.theme', { theme: theme() }); break;
       case 'feed.propose':
@@ -131,7 +135,7 @@
       me = j;
       if (!j.signedIn) return showGate();
       gate.hidden = true; frame.hidden = false;
-      if (ready) send('feed.init', { me: me, theme: theme(), tune: store.get('tune', null), onboarded: store.get('onboarded', false), version: me.version });
+      if (ready) init();
     }).catch(function (e) { gate.hidden = false; note('Your node did not answer (' + e.message + '). Try again in a moment.'); });
   }
   // NIP-07 extensions inject late; give them a moment before deciding.

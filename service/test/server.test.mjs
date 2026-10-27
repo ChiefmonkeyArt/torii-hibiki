@@ -38,7 +38,12 @@ test('feed service end to end', async (t) => {
   const reply = finalizeEvent({ kind: 1, created_at: now() - 30, tags: [['e', root.id, '', 'root'], ['p', friend]], content: 'Lovely' }, ownerSk);
   const like = finalizeEvent({ kind: 7, created_at: now() - 20, tags: [['e', root.id], ['p', friend]], content: '+' }, ownerSk);
   store.add(finalizeEvent({ kind: 0, created_at: now() - 100, tags: [], content: JSON.stringify({ name: 'Tamsin', picture: 'https://img.example/me.png' }) }, friendSk));
-  for (const e of [root, reply, like]) store.add(e);
+  // A stranger's reply that other strangers liked: shown, but after the circle reply.
+  const strangerSk = generateSecretKey(), fanSk = generateSecretKey();
+  const sReply = finalizeEvent({ kind: 1, created_at: now() - 40, tags: [['e', root.id, '', 'root'], ['p', friend]], content: 'The light on the estuary here is something else' }, strangerSk);
+  const quiet = finalizeEvent({ kind: 1, created_at: now() - 50, tags: [['e', root.id, '', 'root'], ['p', friend]], content: 'Nice spot for a walk' }, fanSk);
+  const fanLike = finalizeEvent({ kind: 7, created_at: now() - 10, tags: [['e', sReply.id]], content: '+' }, fanSk);
+  for (const e of [root, reply, like, sReply, quiet, fanLike]) store.add(e);
 
   let r = await fetch(`${base}/api/health`);
   const health = await r.json();
@@ -68,9 +73,11 @@ test('feed service end to end', async (t) => {
   const it = feed.items[0];
   assert.equal(it.id, root.id);
   assert.equal(it.f.c, 1);
-  assert.equal(it.f.ce, 1, 'owner like counts as circle engagement');
-  assert.equal(it.replies, 1);
-  assert.equal(it.peek[0].id, reply.id, 'circle reply peek');
+  assert.equal(it.f.ce, 0, 'the owner\'s own like does not boost the post');
+  assert.equal(it.me.l, 1, 'the owner\'s like is reported so the button shows it');
+  assert.equal(it.replies, 3);
+  assert.deepEqual(it.peek.map((p) => p.id), [reply.id, sReply.id], 'peek: circle first, then the most popular reply from anyone');
+  assert.equal(it.peek[1].likes, 1);
   assert.match(it.media[0].src, /^\/hibiki\/img\/[\w-]{22}\/640\//, 'media is a signed node path');
   assert.ok(!JSON.stringify(feed).includes('"https://img.example/me.png"'), 'raw image urls never reach the napplet');
   assert.match(feed.profiles[friend].pic, /^\/hibiki\/img\//);
@@ -84,7 +91,9 @@ test('feed service end to end', async (t) => {
 
   r = await fetch(`${base}/api/thread/${root.id}`, { headers: { cookie } });
   const th = await r.json();
-  assert.equal(th.replies.length, 1); assert.equal(th.replies[0].circle, true);
+  assert.deepEqual(th.replies.map((x) => x.id), [reply.id, sReply.id, quiet.id], 'thread shows every reply: circle, popular, then oldest');
+  assert.equal(th.replies[0].circle, true); assert.equal(th.replies[1].circle, false);
+  assert.ok(!('showOthers' in th) && th.hiddenSpam === 0);
 
   r = await fetch(`${base}/api/signal`, { headers: { cookie } });
   assert.equal((await r.json()).follows, 1);

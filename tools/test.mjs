@@ -114,6 +114,13 @@ t('size budgets (gzip): shell <= 8 KB, napplet <= 32 KB, fonts <= 64 KB', () => 
   console.log(`     shell ${shell} B, napplet ${nap} B, fonts ${fonts} B`);
   assert.ok(shell <= 8 * 1024, `shell ${shell}`); assert.ok(nap <= 32 * 1024, `napplet ${nap}`); assert.ok(fonts <= 64 * 1024, `fonts ${fonts}`);
 });
+t('replies and likes: no reply gating, in-place like, opt-out only for likes', () => {
+  const nap = read('web/napplet.js'), shell = read('web/shell.js');
+  assert.ok(!/outside your circle/.test(nap) && !/showOthers/.test(nap), 'every reply is shown, no Show gate');
+  assert.match(nap, /function patch\(it\)/); assert.ok(!/S\.liked\[it\.id\] = 1; render\(\)/.test(nap), 'liking does not re-render the page');
+  assert.match(shell, /draft\.kind === 7 && store\.get\('skip7'/, 'only likes may skip the confirm dialog');
+  assert.match(read('web/index.html'), /id="c-skipbox"/);
+});
 t('installer: preflight, fragment-first, nginx -t and health-check rollback', () => {
   assert.ok(sh.startsWith('#!/usr/bin/env bash') && /set -euo pipefail/.test(sh));
   const frag = sh.indexOf('cat > "${FRAGMENT_FILE}.new"'), test = sh.indexOf('if ! nginx -t'), flip = sh.lastIndexOf('mv -Tf "${CURRENT_LINK}.new" "$CURRENT_LINK"\nsystemctl'), reg = sh.indexOf('register "$APP"');
