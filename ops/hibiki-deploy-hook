@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# ADR-0002: forced command for the hibiki-deploy SSH key. Whatever the client
+# asks for, sshd runs only this. Two requests are accepted:
+#   deploy vX.Y.Z   install that tag (checked again by hibiki-deploy, as root)
+#   status          print the installed release and the local health JSON
+set -euo pipefail
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+cmd="${SSH_ORIGINAL_COMMAND:-}"
+log() { logger -t hibiki-deploy-hook -- "$*" 2>/dev/null || true; }
+# Test aid: HIBIKI_HOOK_DRYRUN=1 prints the action instead of running it.
+run() { if [[ "${HIBIKI_HOOK_DRYRUN:-}" == 1 ]]; then echo "would run: $*"; else exec "$@"; fi; }
+if [[ "$cmd" =~ ^deploy\ (v[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4})$ ]]; then
+  log "deploy ${BASH_REMATCH[1]}"
+  run sudo -n /usr/local/sbin/hibiki-deploy "${BASH_REMATCH[1]}"
+elif [[ "$cmd" == "status" ]]; then
+  log "status"
+  readlink -f /apps/hibiki/current 2>/dev/null || echo "not installed"
+  run curl -fsS --max-time 5 http://127.0.0.1:8795/hibiki/api/health
+else
+  log "refused: ${cmd:0:80}"
+  echo "hibiki-deploy-hook: refused (only 'deploy vX.Y.Z' or 'status')" >&2
+  exit 2
+fi

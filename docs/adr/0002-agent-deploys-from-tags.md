@@ -1,6 +1,6 @@
 # ADR-0002: Owner-approved Hibiki deploys run by the agent
 
-- **Status:** Proposed (2026-10-27)
+- **Status:** Accepted (2026-10-27; shipped in v0.2.4)
 - **Applies to:** the owner's own node, `chiefmonkey.art`, only. Other operators are never touched.
 - **Relates to:** Torii Quest ADR-0101 (deploy-only key with a forced command), ADR-0102 (admin key), ADR-0106 (never force-update; deploys are manual only).
 
@@ -54,7 +54,7 @@ Add a third key with one job: installing a Hibiki release that has already been 
 
 `.github/workflows/deploy.yml` in torii-hibiki:
 
-- Runs on `workflow_dispatch` only, with a required `tag` input. There is no trigger on tag push and no schedule.
+- Runs on `workflow_dispatch` only, with an `action` input (`deploy` or `status`) and a `tag` input (required for `deploy`). Inputs reach the shell only through environment variables. There is no trigger on tag push and no schedule.
 - `concurrency: hibiki-vps-deploy`, `permissions: contents: read`, a 10-minute timeout.
 - SSH with `StrictHostKeyChecking=yes` against a pinned host key in the secret `HIBIKI_DEPLOY_KNOWN_HOSTS`. The setup script prints the VPS host-key fingerprints, so the owner can confirm the pinned key matches.
 - Sends `deploy <tag>`, streams the output into the workflow log, then checks the public health endpoint reports that version.
@@ -86,10 +86,18 @@ Deleting the GitHub secret also disables it. The setup script prints this comman
 Shipped in the next Hibiki release (v0.2.4) as `ops/install-deploy-access.sh`, run from the tagged clone:
 
 ```bash
-cd ~/torii-hibiki && git fetch --tags && git checkout v0.2.4 && sudo ./ops/install-deploy-access.sh
+cd ~/torii-hibiki && git fetch --tags && git checkout v0.2.4 && sudo ./install.sh && sudo ./ops/install-deploy-access.sh
 ```
 
-It installs the hook, the deploy script, the sudoers rule and the forced-command key line, creates `/opt/torii/src/torii-hibiki`, and prints the host-key fingerprints and the revoke command. Every step is idempotent. The agent then stores `HIBIKI_DEPLOY_HOST` and `HIBIKI_DEPLOY_KNOWN_HOSTS`, and does a first `status` run to prove the key works.
+This also installs v0.2.4 itself, so the first agent-run deploy is the next release.
+
+It installs the hook, the deploy script, the sudoers rule and the forced-command key line, creates `/opt/torii/src/torii-hibiki`, and prints the host-key fingerprints and the revoke command. Every step is idempotent. The three secrets (`HIBIKI_DEPLOY_SSH_KEY`, `HIBIKI_DEPLOY_HOST`, `HIBIKI_DEPLOY_KNOWN_HOSTS`) were stored on 2026-10-27, before the release. The pinned host keys, from `ssh-keyscan chiefmonkey.art`, must match what the script prints:
+
+- ED25519 `SHA256:qvmGaYgo6ztDAK3S+xToUhpfyCSZBbxw+tXpmB+YFmk`
+- ECDSA `SHA256:TrkBL6YACX0ovdXqpW4hd5O31999bMDxUqcML+UOuP0`
+- RSA `SHA256:XAp5IrSVcT4iNDftiReaMjk0KkiOI4pajBV7wrECywU`
+
+After setup the agent does a first `status` run to prove the key works.
 
 ## Alternatives considered
 
@@ -102,4 +110,5 @@ It installs the hook, the deploy script, the sudoers rule and the forced-command
 
 - The agent can finish a release end to end (PR, merge, tag, install, health check) once the owner says to install, with no pasted commands.
 - One more credential exists. It is narrow, revocable in one line, and its use is visible in the Actions log and the VPS journal.
+- Children of the deploy script do not inherit its lock (git runs with automatic gc off), so a background git job cannot block the next deploy.
 - Tests in v0.2.4 cover the hook's argument check (only `deploy vX.Y.Z` and `status`), the deploy script's refusals (unknown tag, lightweight tag, tag not at main, VERSION mismatch), the sudoers rule passing `visudo -c`, and the workflow having no push or schedule triggers.

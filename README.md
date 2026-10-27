@@ -2,13 +2,13 @@
 
 **What resonates with you.** Hibiki is a personal Nostr discovery feed. It's a standalone Torii napplet that finds people and posts beyond your circle, tuned to your own taste and humour. Torii nodes cooperate to score spam, and their scores are signed and advisory.
 
-Status: **v0.2.3, first working feed.** Your circle's original posts, news, video, audio and long reads, gathered by your own node and ranked in your browser. Replies from everyone line up under each post (people you know first, then the most popular), videos show preview frames and play in a big player with the post, actions and replies beside them, and news links get a free TL;DR picked from the article by your node (no AI, no sats). Images and links come through your node, so outside hosts never see you reading.
+Status: **v0.2.4, first working feed.** Your circle's original posts, news, video, audio and long reads, gathered by your own node and ranked in your browser. Replies from everyone line up under each post (people you know first, then the most popular), videos show preview frames and play in a big player with the post, actions and replies beside them, and news links get a free TL;DR picked from the article by your node (no AI, no sats). Images and links come through your node, so outside hosts never see you reading.
 
 ## Documents
 
 - [ADR-0001: personalised discovery as a standalone napplet](docs/adr/0001-personalised-discovery.md) — Accepted (revision 4)
 - [Node-to-node trust and spam-scoring event model](docs/event-model.md) — Accepted. Reuses NIP-85, NIP-51, NIP-56 and NIP-78, and adds no new kinds
-- [ADR-0002: owner-approved deploys run by the agent](docs/adr/0002-agent-deploys-from-tags.md) — Proposed
+- [ADR-0002: owner-approved deploys run by the agent](docs/adr/0002-agent-deploys-from-tags.md) — Accepted
 - [Implementation roadmap](docs/roadmap.md) — P0 preview → P6 mount anywhere
 - Continuity: [strategy](hibiki-strategy.md), [todo](hibiki-todo.md), [progress](hibiki-progress.md), [handoff](hibiki-handoff.md)
 
@@ -31,10 +31,12 @@ Status: **v0.2.3, first working feed.** Your circle's original posts, news, vide
 Needs Node 22.13+ with npm. On CPUs without x86-64-v2 support (some older or emulated VPS CPUs) the installer also installs `libvips-tools` for image resizing.
 
 ```bash
-cd ~/torii-hibiki 2>/dev/null || { git clone https://github.com/ChiefmonkeyArt/torii-hibiki.git ~/torii-hibiki && cd ~/torii-hibiki; }; git fetch --tags && git checkout v0.2.3 && sudo ./install.sh && curl -s https://chiefmonkey.art/hibiki/api/health
+cd ~/torii-hibiki 2>/dev/null || { git clone https://github.com/ChiefmonkeyArt/torii-hibiki.git ~/torii-hibiki && cd ~/torii-hibiki; }; git fetch --tags && git checkout v0.2.4 && sudo ./install.sh && curl -s https://chiefmonkey.art/hibiki/api/health
 ```
 
 The installer finds your npub from the Torii Suite or Continuum settings (or pass it: `sudo ./install.sh npub1...`). It installs the release to `/apps/hibiki/`, creates the `hibiki` user, `/etc/hibiki/hibiki.env` and `/var/lib/hibiki`, installs the sandboxed `hibiki-feed` service, writes `/opt/torii/nginx-fragments/hibiki.conf`, validates nginx, health-checks the service (rolling everything back on failure) and registers the **Hibiki** launcher card.
+
+Optional, owner's node only (ADR-0002): `sudo ./ops/install-deploy-access.sh` lets the maintainer's agent install releases you ask for through a manual GitHub workflow. The key it adds can only run `deploy vX.Y.Z` (a tag at main HEAD) or `status`. Other operators should skip this.
 
 To remove it: `sudo systemctl disable --now hibiki-feed && sudo rm -f /etc/systemd/system/hibiki-feed.service && sudo torii unregister hibiki && sudo rm -f /opt/torii/nginx-fragments/hibiki.conf && sudo torii reload && sudo rm -rf /apps/hibiki /etc/hibiki /var/lib/hibiki`.
 

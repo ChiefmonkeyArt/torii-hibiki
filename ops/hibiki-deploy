@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# ADR-0002: install a Hibiki release that is merged, tagged and current.
+# Runs as root via one sudoers rule. Works only from its own root-owned clone,
+# refuses anything but an annotated vX.Y.Z tag that is origin/main HEAD with a
+# matching VERSION, then runs that tag's install.sh (which health-checks and
+# rolls back on failure).
+set -euo pipefail
+umask 022
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+TAG="${1:-}"
+SRC=/opt/torii/src/torii-hibiki
+REPO=https://github.com/ChiefmonkeyArt/torii-hibiki.git
+LOCK=/run/lock/hibiki-deploy.lock
+INSTALL=./install.sh
+# Test overrides, honoured only when not root (sudo resets the environment anyway).
+if [[ "$(id -u)" -ne 0 ]]; then
+  SRC="${HIBIKI_DEPLOY_SRC:-$SRC}"; REPO="${HIBIKI_DEPLOY_REPO:-$REPO}"
+  LOCK="${HIBIKI_DEPLOY_LOCK:-$LOCK}"; INSTALL="${HIBIKI_DEPLOY_INSTALL:-$INSTALL}"
+fi
+say() { echo "==> $*"; logger -t hibiki-deploy -- "$*" 2>/dev/null || true; }
+# Children must not inherit the lock fd (git's background gc would hold it).
+g() { git -c gc.auto=0 -c maintenance.auto=false "$@" 9>&-; }
+die() { echo "hibiki-deploy: $*" >&2; logger -t hibiki-deploy -- "refused: $*" 2>/dev/null || true; exit 1; }
+
+[[ "$TAG" =~ ^v[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$ ]] || die "not a release tag: '${TAG:0:40}'"
+exec 9>"$LOCK"
+flock -n 9 || die "another deploy is running"
+
+if [[ ! -d "$SRC/.git" ]]; then
+  mkdir -p "$(dirname "$SRC")"
+  g clone -q "$REPO" "$SRC"
+fi
+cd "$SRC"
+g remote set-url origin "$REPO"
+g fetch -q --prune --force origin '+refs/heads/main:refs/remotes/origin/main' '+refs/tags/*:refs/tags/*'
+
+[[ "$(g cat-file -t "refs/tags/$TAG" 2>/dev/null || true)" == "tag" ]] || die "$TAG is not an annotated tag on origin"
+want="$(g rev-parse "$TAG^{commit}")"
+main="$(g rev-parse refs/remotes/origin/main)"
+[[ "$want" == "$main" ]] || die "$TAG ($want) is not main HEAD ($main)"
+ver="$(g show "$TAG:VERSION" | tr -d '[:space:]')"
+[[ "v$ver" == "$TAG" ]] || die "VERSION $ver does not match $TAG"
+
+g -c advice.detachedHead=false checkout -q --force --detach "$TAG"
+g clean -qfdx
+say "installing $TAG ($want)"
+"$INSTALL" 9>&-
+say "installed $TAG"
