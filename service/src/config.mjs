@@ -41,6 +41,7 @@ export function loadConfig(env = process.env) {
     indexRelays: list(env.HIBIKI_INDEX_RELAYS, 'wss://purplepag.es wss://relay.damus.io wss://nos.lol'),
     origin: (env.HIBIKI_ORIGIN || '').replace(/\/+$/, ''), // e.g. https://chiefmonkey.art
     basePath: '/hibiki',
+    imgBackend: ['auto', 'sharp', 'vips', 'copy'].includes(env.HIBIKI_IMG_BACKEND) ? env.HIBIKI_IMG_BACKEND : 'auto',
     imgCacheBytes: Number(env.HIBIKI_IMG_CACHE_MB || 512) * 1024 * 1024,
     retainDays: Number(env.HIBIKI_RETAIN_DAYS || 14),
     syncMinutes: Number(env.HIBIKI_SYNC_MINUTES || 5),

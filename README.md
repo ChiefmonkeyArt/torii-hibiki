@@ -2,7 +2,7 @@
 
 **What resonates with you.** Hibiki is a personal Nostr discovery feed. It's a standalone Torii napplet that finds people and posts beyond your circle, tuned to your own taste and humour. Torii nodes cooperate to score spam, and their scores are signed and advisory.
 
-Status: **v0.2.0, first working feed.** Your circle's original posts, news, video, audio and long reads, gathered by your own node and ranked in your browser. Images and links come through your node, so outside hosts never see you reading.
+Status: **v0.2.1, first working feed.** Your circle's original posts, news, video, audio and long reads, gathered by your own node and ranked in your browser. Images and links come through your node, so outside hosts never see you reading.
 
 ## Documents
 
@@ -27,10 +27,10 @@ Status: **v0.2.0, first working feed.** Your circle's original posts, news, vide
 
 ## Install on a Torii Base node (owner-run)
 
-Needs Node 22.13+ with npm.
+Needs Node 22.13+ with npm. On CPUs without x86-64-v2 support (some older or emulated VPS CPUs) the installer also installs `libvips-tools` for image resizing.
 
 ```bash
-cd ~/torii-hibiki 2>/dev/null || { git clone https://github.com/ChiefmonkeyArt/torii-hibiki.git ~/torii-hibiki && cd ~/torii-hibiki; }; git fetch --tags && git checkout v0.2.0 && sudo ./install.sh && curl -s https://chiefmonkey.art/hibiki/api/health
+cd ~/torii-hibiki 2>/dev/null || { git clone https://github.com/ChiefmonkeyArt/torii-hibiki.git ~/torii-hibiki && cd ~/torii-hibiki; }; git fetch --tags && git checkout v0.2.1 && sudo ./install.sh && curl -s https://chiefmonkey.art/hibiki/api/health
 ```
 
 The installer finds your npub from the Torii Suite or Continuum settings (or pass it: `sudo ./install.sh npub1...`). It installs the release to `/apps/hibiki/`, creates the `hibiki` user, `/etc/hibiki/hibiki.env` and `/var/lib/hibiki`, installs the sandboxed `hibiki-feed` service, writes `/opt/torii/nginx-fragments/hibiki.conf`, validates nginx, health-checks the service (rolling everything back on failure) and registers the **Hibiki** launcher card.
