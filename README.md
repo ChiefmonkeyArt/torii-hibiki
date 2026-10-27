@@ -8,6 +8,7 @@ Status: **v0.2.3, first working feed.** Your circle's original posts, news, vide
 
 - [ADR-0001: personalised discovery as a standalone napplet](docs/adr/0001-personalised-discovery.md) — Accepted (revision 4)
 - [Node-to-node trust and spam-scoring event model](docs/event-model.md) — Accepted. Reuses NIP-85, NIP-51, NIP-56 and NIP-78, and adds no new kinds
+- [ADR-0002: owner-approved deploys run by the agent](docs/adr/0002-agent-deploys-from-tags.md) — Proposed
 - [Implementation roadmap](docs/roadmap.md) — P0 preview → P6 mount anywhere
 - Continuity: [strategy](hibiki-strategy.md), [todo](hibiki-todo.md), [progress](hibiki-progress.md), [handoff](hibiki-handoff.md)
 
