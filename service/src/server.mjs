@@ -16,6 +16,8 @@ import { makeIngest } from './ingest.mjs';
 import { makeFeed } from './feed.mjs';
 import { verifyNip98, checkPublish } from './auth.mjs';
 import { FetchError } from './safefetch.mjs';
+import { makeZaps } from './zap.mjs';
+import { encodeQR } from './qr.mjs';
 
 export const VERSION = fs.readFileSync(new URL('../../VERSION', import.meta.url), 'utf8').trim();
 
@@ -32,6 +34,7 @@ export function createApp(cfg, deps = {}) {
   const proxies = makeProxies({ signer, cache, imager, log });
   const ingest = deps.ingest || makeIngest({ cfg, store, log });
   const feed = makeFeed({ cfg, store, ingest, signer });
+  const zaps = makeZaps({ cfg, ingest, store, get: deps.zapGet });
   const seen = new Map();
   const loginTries = new Map();
   const B = cfg.basePath;
@@ -93,6 +96,22 @@ export function createApp(cfg, deps = {}) {
       if (why) return json(res, 400, { error: why });
       return json(res, 200, { ok: true, id: ev.id, relays: await ingest.publish(ev) });
     }
+    if ((m = /^author\/([0-9a-f]{64})$/.exec(route))) {
+      if (q.get('live') === '1') await ingest.fetchAuthor(m[1]);
+      return json(res, 200, feed.author(m[1]));
+    }
+    // Zaps (NIP-57): look up, then fetch and check an invoice for an owner-signed request.
+    if ((m = /^zap\/info\/([0-9a-f]{64})$/.exec(route))) {
+      try { return json(res, 200, await zaps.describe(m[1])); }
+      catch (e) { return json(res, e.status && e.status < 500 ? 422 : 502, { error: e.message }); }
+    }
+    if (route === 'zap/invoice' && post) {
+      try {
+        const r = await zaps.invoice(await body(req, 16 * 1024));
+        return json(res, 200, { ...r, qr: encodeQR(('lightning:' + r.pr).toUpperCase()).rows });
+      } catch (e) { return json(res, e.status && e.status < 500 ? 422 : 502, { error: e.message }); }
+    }
+    if ((m = /^zap\/receipt\/([0-9a-f]{64})$/.exec(route))) return json(res, 200, await zaps.receipt(m[1]));
     if (route === 'sync' && post) { ingest.tick(); return json(res, 202, { ok: true }); }
     return json(res, 404, { error: 'no such route' });
   }

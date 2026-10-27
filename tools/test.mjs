@@ -88,6 +88,8 @@ t('napplet only renders same-origin node paths as media sources', () => {
   assert.ok(js.includes("var PROXY = /^\\/hibiki\\/(img|media)\\/[\\w-]{22}\\//;"), 'PROXY guard');
   assert.match(js, /k === 'src' \|\| k === 'poster'\) \{ if \(PROXY\.test\(v\)\)/, 'h() drops any other src');
   assert.ok(!/\bhref\b/.test(js), 'no anchors: links open through the shell');
+  for (const m of js.matchAll(/\.src = (\w+)/g)) assert.equal(m[1], 'srcs', 'direct src writes only from the PROXY-filtered list');
+  assert.match(js, /srcs = \[big, p\.pic\]\.filter\(function \(s\) \{ return s && PROXY\.test\(s\); \}\)/);
 });
 t('shell accepts messages only from its napplet and sends the CSRF header', () => {
   const js = read('web/shell.js');
@@ -131,6 +133,23 @@ t('watch: preview frames are lazy and capped, the player keeps everything on scr
   assert.ok(wm && !/noteCard|videoBox/.test(wm), 'no second copy of the post or a placeholder under the playing video');
   assert.match(css, /\.modal>\.glass\.vm\{[^}]*height:calc\(100vh - 48px\)[^}]*overflow:hidden/, 'player fits the viewport on desktop');
   assert.match(css, /\.pb>\*\{flex-shrink:0\}/);
+});
+t('zaps: owner always confirms, shell checks every value the napplet sends', () => {
+  const shell = read('web/shell.js'), nap = read('web/napplet.js');
+  const z = shell.slice(shell.indexOf('function zap(d)'), shell.indexOf('var INVOICE'));
+  assert.ok(z && /return ask\(\{/.test(z), 'zap goes through the confirm dialog');
+  assert.ok(!/skip7|skip:/.test(z), 'the zap confirm can never be skipped');
+  assert.match(z, /sats >= 1 && sats <= 1000000/); assert.match(z, /HEX\.test\(d\.pubkey/);
+  assert.match(shell, /case 'feed\.lightning': if \(INVOICE\.test\(d\.pr/, 'only invoices open a wallet');
+  assert.match(shell, /case 'feed\.copy':\s*if \(INVOICE\.test\(d\.text[^)]*\) \|\| \/\^npub1/, 'clipboard takes invoices or npubs only');
+  assert.match(shell, /case 'feed\.author': if \(HEX\.test/); assert.match(shell, /case 'feed\.zapcheck': if \(HEX\.test/);
+  assert.ok(!/webln|window\.nostr/.test(nap), 'the napplet never reaches a wallet or signer itself');
+});
+t('conversation: names open profiles, Reply opens a form under that comment', () => {
+  const nap = read('web/napplet.js');
+  assert.match(nap, /function who\(pk/); assert.match(nap, /function personPage\(/);
+  assert.match(nap, /function composer\(/); assert.match(nap, /myReplies/, 'your reply shows at once');
+  assert.match(nap, /posted ' \+ \w+\.dup \+ ' times|dup \+ ' times/, 'collapsed duplicates are labelled');
 });
 t('deploy access (ADR-0002): hook accepts only deploy vX.Y.Z or status', () => {
   const run = (cmd) => cp.spawnSync('bash', [path.join(ROOT, 'ops/hibiki-deploy-hook')], { env: { ...process.env, SSH_ORIGINAL_COMMAND: cmd, HIBIKI_HOOK_DRYRUN: '1' }, encoding: 'utf8' });

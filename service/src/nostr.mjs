@@ -94,6 +94,7 @@ export function parseProfile(ev) {
     picture: s(j.picture, 1000).startsWith('https://') ? s(j.picture, 1000) : '',
     nip05: s(j.nip05, 120),
     lud16: s(j.lud16, 120),
+    lud06: s(j.lud06, 1000),
   };
 }
 
