@@ -1,6 +1,6 @@
 # ADR-0001: Hibiki — personalised Nostr discovery as a standalone Torii napplet
 
-Date: 2026-10-26. Status: **Proposed**, revision 2 (reviewed 2026-10-26). Target first slice: v0.1.0 (preview card only). Revision 3 adds Applesauce and makes FIPS the preferred node path. Licence: GPL-3.0-or-later, matching Continuum, Plebeian Market, Quest and Suite.
+Date: 2026-10-26. Status: **Accepted**, revision 4 (accepted by the owner 2026-10-27, first built in v0.2.0). Revision 2 followed review, revision 3 added Applesauce and made FIPS the preferred node path, and revision 4 records the content-first UX and the as-built P1 boundaries (section 9). Licence: GPL-3.0-or-later, matching Continuum, Plebeian Market, Quest and Suite.
 
 ## Context
 
@@ -92,19 +92,39 @@ Hibiki uses [Applesauce](https://github.com/hzrd149/applesauce) v7 (MIT, GPL-com
 | Follow graph to N hops, timelines, reactions and zaps for taste neighbours | `applesauce-loaders` (`social-graph`, `timeline`, `reactions`, `zaps`) |
 | NIP-85 trusted assertions and 10040 provider lists | `applesauce-common` (trusted-assertion helpers and casts, trusted-provider list factory), `applesauce-actions` |
 | Mutes, bookmarks and other lists | `applesauce-common` models |
-| Persistent event store on the node | `applesauce-sqlite` (better-sqlite3 backend) |
-| Parsing note content: links, media, mentions, for the image-proxy rewrite | `applesauce-content` (in the shell) |
-| NIP-07 / NIP-46 signing and NIP-44 sealing | `applesauce-signers`, `applesauce-accounts` (shell only, never the service) |
+| Persistent event store on the node | `applesauce-sqlite` with Node's built-in `node:sqlite` backend (`applesauce-sqlite/native`, no native compile) |
+| Parsing note content: links, media, mentions, for the image-proxy rewrite | done on the node in v0.2 (small NIP-10/NIP-92 helpers); `applesauce-content` when richer parsing is needed |
+| NIP-07 / NIP-46 signing and NIP-44 sealing | NIP-07 directly in v0.2; `applesauce-signers`/`applesauce-accounts` when NIP-46 and sealing arrive (P2). Shell only, never the service |
 
 - **Trust stays ours:** Applesauce only fetches, stores and parses. Hibiki's own checks still run on every event: mutual service bindings, quorum rules, the no-laundering rule and consent gates.
 - **The napplet doesn't bundle Applesauce:** it has no network access, so it receives snapshots from the shell. That keeps it small.
 - **Pinned and wrapped:** exact versions, matching Quest's pins where they overlap, behind one thin adapter file each in the shell and the service, so a major upstream release costs one file.
 - **Size budget, enforced in tests:** shell Applesauce chunks ≤ 60 KB gzip (Quest measured 52 KB). Napplet bundle ≤ 150 KB gzip, with Applesauce excluded.
 
+### 9. Revision 4: content first, and the P1 boundaries as built
+
+**Product focus.** Hibiki is first a place to find interesting and entertaining things from your circle and its news: notes, pictures, video, audio, long reads and live streams. The algorithm is not the headline. Its controls stay subtle (a small "signal" pill, a glint on each card that explains why it is there, an orb for your settings) but are always one tap away and pleasant to use.
+
+- **Originals first.** Social sections show root posts only (NIP-10: no reply markers, positional e-tags count as replies, mentions and quotes do not). A card may show a peek of one or two replies from people in your circle.
+- **Sections:** Today (hero plus picks), Circle, News (link-led posts and curators, "Mekiki" 目利き), Watch, Listen, Read (kind 30023) and Your signal.
+- **Right panel** on desktop, full-screen sheet on phones: Media, Replies (with an inline composer) and Link, chosen per post.
+- **Link previews** are fetched by the node under the same SSRF guard as images, parsed as text only, and shown as cards.
+
+**Boundaries as built (these refine sections 1, 2 and 8).**
+
+- **Applesauce lives on the node only in v0.2.** The node's feed service uses `applesauce-relay`, `applesauce-core` and `applesauce-sqlite`. The browser never connects to relays, so relays do not see the reader's IP either. The shell is plain code (under 5 KB gzip) that does NIP-07 sign-in and signs what the owner approves. The shell budget in section 8 therefore applies from P2, when sealing and NIP-46 bring Applesauce signers into the browser.
+- **Napplet loading:** a same-origin file (`napplet.html`) in an iframe with `sandbox="allow-scripts"`, and the response header CSP carries `sandbox allow-scripts` and `connect-src 'none'`. The napplet runs with an opaque origin, cannot fetch, cannot read cookies or storage, and talks to the shell only through `postMessage`. Section 1's `srcdoc` wording is superseded.
+- **Media authorisation:** the node rewrites every image, video and audio URL into a path signed with an HMAC key that never leaves the node (`/hibiki/img/<sig>/<width>/<url>`, `/hibiki/media/<sig>/<url>`). Only the signed-in owner receives these paths, and the napplet's renderer drops any `src` that is not one. Requests from the opaque-origin napplet cannot carry the session cookie, so the signature is the authorisation. This refines "serves only to the signed-in owner session".
+- **Video and audio** are proxied too, tap-to-play, streamed with Range requests and a MIME allowlist, never cached on disk. This replaces the earlier "fetch directly when tapped" exception, so no third-party host ever sees the reader.
+- **Ranking split:** the node computes public features per post (in circle, friend-of-friend, circle and wider reactions, zaps, age, spam score, media) and returns them with a default order. The browser re-ranks with the owner's weights, which are stored only in the browser. The same `rank.js` runs in both places. Private signals beyond the sliders are P2.
+- **Writes:** replies, reactions and reposts are proposals from the napplet. The shell shows exactly what will be signed, asks the signer, then posts the signed event to the node, which checks it is owner-signed and an allowed kind (1, 6, 7, 10000, 30004, 30078) before relaying it to the shared node relay and the owner's write relays. The node holds no keys.
+- **Shared relay first:** the node reads from and writes to the Suite relay on loopback (`ws://127.0.0.1:7777`, the same relay Continuum, the Torii Suite and Plebeian use), then the follows' NIP-65 outbox relays chosen greedily under a cap (24), and public index relays only to discover relay lists.
+- **Footprint:** one Node 22.13+ process on loopback, systemd-sandboxed as its own user, memory-capped, 14-day retention, bounded image cache (512 MB default).
+
 ## Consequences
 
 - No Continuum, Quest or Base code changes are needed to start. Base registration is reused as is.
-- The node needs a small always-on service (planned from v0.2). Embeddings are optional and gated on host capacity. v1 runs without an ML model.
+- The node needs a small always-on service (`hibiki-feed`, from v0.2.0). Embeddings are optional and gated on host capacity. v1 runs without an ML model.
 - A new long-lived key (the feed service key) is introduced. It is bound to the owner by a signed declaration and can be revoked.
 - **Media goes through the node, loads automatically.** Avatars, banners and images in notes point at arbitrary third-party hosts. A direct browser fetch reveals the reader's IP and viewing time to whoever runs that host, so a hostile avatar URL works like a tracking pixel. Instead, the feed service runs a same-origin image proxy, part of P1, not an optional extra. Images load automatically and outside hosts only ever see the VPS address. The proxy:
   - Accepts only `https`. Refuses private, loopback and link-local addresses, re-checking after DNS and on redirects, to prevent SSRF.
@@ -112,9 +132,9 @@ Hibiki uses [Applesauce](https://github.com/hzrd149/applesauce) v7 (MIT, GPL-com
   - Re-encodes to small WebP thumbnails (avatars 96/192 px, note images up to 1080 px wide), which also strips EXIF metadata.
   - Keeps a bounded LRU disk cache (default 512 MB, owner-adjustable), keyed by a hash of the URL. Blossom blobs are verified against their hash.
   - Serves only to the signed-in owner session, so it can't be used as an open proxy.
-- **Video and audio** are too heavy to proxy on a small VPS. They show a proxied poster frame and fetch the media directly only when tapped, with the source host named. This is the only click-to-load case.
+- **Video and audio** are tap-to-play and streamed through the node as well (revision 4, section 9), so there is no direct third-party load at all.
 - **If the proxy is unavailable**, the feed shows generated identicons and image placeholders. It never falls back silently to direct third-party loads.
-- The napplet never fetches media itself. The shell hands it same-origin proxy URLs, so the napplet's network-denying CSP holds.
+- The napplet never fetches media itself. The node hands it signed same-origin proxy paths, so the napplet's network-denying CSP holds.
 - v1 targets single-owner nodes. Shared or team nodes need per-person service keys and permission rules first.
 - Quality depends on how many independent nodes participate. A single node still works: circle, taste neighbours and exploration need no peers.
 

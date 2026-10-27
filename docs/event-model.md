@@ -1,6 +1,6 @@
 # Node-to-node trust and spam-scoring event model (v1 draft)
 
-Status: **Proposed**, revision 2 (reviewed 2026-10-26), together with ADR-0001. Design rule: reuse standard kinds first. This model introduces **no new event kinds**. The only Torii-specific parts are namespaced tags on NIP-85 assertions and two NIP-78 `d` tags.
+Status: **Accepted** (2026-10-27, with ADR-0001 revision 4), revision 2. Nothing in it is published before P4. Design rule: reuse standard kinds first. This model introduces **no new event kinds**. The only Torii-specific parts are namespaced tags on NIP-85 assertions and two NIP-78 `d` tags.
 
 ## Keys and roles
 

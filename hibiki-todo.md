@@ -4,18 +4,23 @@
 
 ### Active tasks
 
-- **HIBIKI-P0 (v0.1.0):** preview page, launcher card, ADR-0001, event model and roadmap. Remaining: the owner runs the install command on the VPS, then verifies the card and `/hibiki/` live.
-- **HIBIKI-ADR-ACCEPT:** revision 2 incorporates the 2026-10-26 review. The owner marks ADR-0001 and the event model Accepted or requests changes. Nothing past P0 starts before then.
+- **HIBIKI-P1-INSTALL (v0.2.0):** the owner runs the install command on the VPS, signs in at `/hibiki/` with their NIP-07 signer and checks: the feed fills from the circle, images load with no third-party requests, a reply/reaction asks for confirmation then appears on the shared relay, and `systemctl status hibiki-feed` shows it under its memory cap.
+- **HIBIKI-P1-ACCEPT:** phone acceptance (warm load under 2 s, panel sheet, tap-to-play) and a week of real use to tune the default weights and spam features.
 - **HIBIKI-P4-RELAY-ADR (later):** a Torii Suite ADR for the additive relay write rule (accept 30382/30383 from bound service keys) before P4.
 
-### Next (P1, v0.2.x) — Circle feed
+### Next (P1 polish, v0.2.x)
 
-- Host shell + sandboxed napplet (`srcdoc`, `allow-scripts`, network-denying CSP); NIP-07 sign-in.
-- Applesauce v7 (pinned, thin adapter, size budget test) in the shell and the service.
-- Loopback feed service (systemd, memory cap, `applesauce-sqlite` store): own relay + NIP-65 outbox reads, follows + 2-hop WoT, ingest spam features, quarantine bucket.
-- "Why am I seeing this" chips; same-origin image proxy (auto-load thumbnails, SSRF-safe, bounded cache; video tap-to-play); `textContent`-only rendering.
+- Video posters: take the `image` field from `imeta` where present; otherwise the blurred author picture stays.
+- Live streams (kind 30311) in Watch with a "live" badge.
+- Zaps: show NIP-57 zap totals (counted already) and add zapping through the shell (needs an LNURL flow and owner confirmation).
+- Search box: search loaded posts; later node-side search.
+- Quarantine bucket for low spam-score posts (visible on request).
 
 ### Backlog
 
-- P2 private taste · P3 optional embeddings · P4 publish assertions · P5 peer cooperation + FIPS · P6 mounts/interop (see `docs/roadmap.md`).
+- P2 private taste (sealed signals, NIP-46, Applesauce signers in the shell) · P3 optional embeddings · P4 publish assertions · P5 peer cooperation + FIPS · P6 mounts/interop (see `docs/roadmap.md`).
 - Align the owner→node binding with the node-relay binding if it is finalised first.
+
+### Done
+
+- HIBIKI-P0 (v0.1.0) preview card. HIBIKI-ADR-ACCEPT: ADR-0001 revision 4 and the event model accepted 2026-10-27. HIBIKI-P1 build (v0.2.0).

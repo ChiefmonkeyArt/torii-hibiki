@@ -2,12 +2,12 @@
 
 **What resonates with you.** Hibiki is a personal Nostr discovery feed. It's a standalone Torii napplet that finds people and posts beyond your circle, tuned to your own taste and humour. Torii nodes cooperate to score spam, and their scores are signed and advisory.
 
-Status: **v0.1.0 preview.** It ships the design documents and a static preview page with its homepage card. There's no feed yet.
+Status: **v0.2.0, first working feed.** Your circle's original posts, news, video, audio and long reads, gathered by your own node and ranked in your browser. Images and links come through your node, so outside hosts never see you reading.
 
 ## Documents
 
-- [ADR-0001: personalised discovery as a standalone napplet](docs/adr/0001-personalised-discovery.md) — Proposed
-- [Node-to-node trust and spam-scoring event model](docs/event-model.md) — Proposed. Reuses NIP-85, NIP-51, NIP-56 and NIP-78, and adds no new kinds
+- [ADR-0001: personalised discovery as a standalone napplet](docs/adr/0001-personalised-discovery.md) — Accepted (revision 4)
+- [Node-to-node trust and spam-scoring event model](docs/event-model.md) — Accepted. Reuses NIP-85, NIP-51, NIP-56 and NIP-78, and adds no new kinds
 - [Implementation roadmap](docs/roadmap.md) — P0 preview → P6 mount anywhere
 - Continuity: [strategy](hibiki-strategy.md), [todo](hibiki-todo.md), [progress](hibiki-progress.md), [handoff](hibiki-handoff.md)
 
@@ -16,23 +16,41 @@ Status: **v0.1.0 preview.** It ships the design documents and a static preview p
 - **Standalone:** Hibiki is not part of Continuum, Quest or Base, but any of them can mount it later through `nap-torii-feed@1`.
 - **Privacy split:** public compute runs on the node. Private taste stays in the browser and is stored only as sealed ciphertext.
 - **Signed advice, not control:** peers' scores are signed and advisory. No single peer can hide anything from you.
-- **FIPS is optional:** relays are the baseline transport.
+- **FIPS first between nodes:** relays and HTTPS stay the universal fallback.
 - **Self-contained:** no external fonts, CDNs or trackers.
 
-## Install the preview on a Torii Base node (owner-run)
+## How it works
+
+- **Web app** (`web/`): a small trusted shell (`index.html`, `shell.js`) signs you in with your NIP-07 signer and asks you to confirm anything before it is signed. The feed itself (`napplet.html`, `napplet.js`, `rank.js`) runs in a sandboxed iframe with no network access; it only talks to the shell.
+- **Feed service** (`service/`, `hibiki-feed`): a single Node process on loopback. It reads who you follow and where they post (NIP-65), starting with your node's shared relay, keeps 14 days of their public posts and reactions in SQLite, computes public features (circle, friend-of-friend, reactions, zaps, spam), and proxies images, video and link previews. It relays only events you signed. It holds no keys.
+- **Ranking** happens in your browser with your own weights, which never leave it.
+
+## Install on a Torii Base node (owner-run)
+
+Needs Node 22.13+ with npm.
 
 ```bash
-git clone https://github.com/ChiefmonkeyArt/torii-hibiki.git && cd torii-hibiki && git checkout v0.1.0 && sudo ./install.sh
+cd ~/torii-hibiki 2>/dev/null || { git clone https://github.com/ChiefmonkeyArt/torii-hibiki.git ~/torii-hibiki && cd ~/torii-hibiki; }; git fetch --tags && git checkout v0.2.0 && sudo ./install.sh && curl -s https://chiefmonkey.art/hibiki/api/health
 ```
 
-This installs the static page to `/apps/hibiki/`, writes `/opt/torii/nginx-fragments/hibiki.conf`, validates nginx (rolling back on failure) and registers the **Hibiki** card on the launcher. It changes nothing else.
+The installer finds your npub from the Torii Suite or Continuum settings (or pass it: `sudo ./install.sh npub1...`). It installs the release to `/apps/hibiki/`, creates the `hibiki` user, `/etc/hibiki/hibiki.env` and `/var/lib/hibiki`, installs the sandboxed `hibiki-feed` service, writes `/opt/torii/nginx-fragments/hibiki.conf`, validates nginx, health-checks the service (rolling everything back on failure) and registers the **Hibiki** launcher card.
 
-To remove it: `sudo torii unregister hibiki && sudo rm -f /opt/torii/nginx-fragments/hibiki.conf && sudo torii reload && sudo rm -rf /apps/hibiki`.
+To remove it: `sudo systemctl disable --now hibiki-feed && sudo rm -f /etc/systemd/system/hibiki-feed.service && sudo torii unregister hibiki && sudo rm -f /opt/torii/nginx-fragments/hibiki.conf && sudo torii reload && sudo rm -rf /apps/hibiki /etc/hibiki /var/lib/hibiki`.
+
+## Develop
+
+```bash
+cd service && npm ci && cd ..
+HIBIKI_DEV=1 HIBIKI_OWNER=npub1... HIBIKI_SECRET=$(openssl rand -hex 32) HIBIKI_DATA=/tmp/hibiki HIBIKI_ORIGIN=http://127.0.0.1:8790 HIBIKI_PRIMARY_RELAY=wss://relay.example node service/src/server.mjs &
+node tools/dev-server.mjs   # http://127.0.0.1:8790/hibiki/
+```
+
+`HIBIKI_DEV=1` skips sign-in for loopback requests only. Never set it on a server.
 
 ## Test
 
 ```bash
-npm test
+npm test   # repo checks + service tests (Node 22.13+, after npm ci in service/)
 ```
 
 ## Licence
