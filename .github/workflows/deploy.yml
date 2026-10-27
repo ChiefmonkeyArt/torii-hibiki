@@ -1,0 +1,64 @@
+name: Deploy to the owner's VPS (manual)
+
+# ADR-0002: run by hand only, after the owner asks for that release to be
+# installed. Never on push, tag or schedule. The key on the VPS is pinned to a
+# forced command that accepts only "deploy vX.Y.Z" or "status".
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'deploy or status'
+        type: choice
+        options: [deploy, status]
+        default: deploy
+      tag:
+        description: 'Release tag to install (vX.Y.Z, must be main HEAD)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hibiki-vps-deploy
+  cancel-in-progress: false
+
+jobs:
+  vps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ACTION: ${{ inputs.action }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - name: Check the request
+        run: |
+          set -euo pipefail
+          if [ "$ACTION" = deploy ] && ! [[ "$TAG" =~ ^v[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$ ]]; then
+            echo "::error::deploy needs a release tag like v0.2.4"; exit 1
+          fi
+      - name: Run on the VPS
+        env:
+          SSH_KEY: ${{ secrets.HIBIKI_DEPLOY_SSH_KEY }}
+          SSH_HOST: ${{ secrets.HIBIKI_DEPLOY_HOST }}
+          KNOWN_HOSTS: ${{ secrets.HIBIKI_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/hibiki
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          cmd=status
+          [ "$ACTION" = deploy ] && cmd="deploy $TAG"
+          ssh -i ~/.ssh/hibiki -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -o ConnectTimeout=20 "ubuntu@${SSH_HOST}" "$cmd"
+          rm -f ~/.ssh/hibiki
+      - name: Public health check
+        if: inputs.action == 'deploy'
+        env:
+          SSH_HOST: ${{ secrets.HIBIKI_DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 15 "https://${SSH_HOST}/hibiki/api/health" | tee health.json
+          echo
+          grep -q "\"version\":\"${TAG#v}\"" health.json || { echo "::error::VPS does not report ${TAG}"; exit 1; }

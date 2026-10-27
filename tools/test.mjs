@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // tools/test.mjs — no-dependency checks for the web app, headers, installer and
 // docs. The service has its own node:test suite in service/test (npm test runs both).
+import os from 'node:os';
+import cp from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -129,6 +131,42 @@ t('watch: preview frames are lazy and capped, the player keeps everything on scr
   assert.ok(wm && !/noteCard|videoBox/.test(wm), 'no second copy of the post or a placeholder under the playing video');
   assert.match(css, /\.modal>\.glass\.vm\{[^}]*height:calc\(100vh - 48px\)[^}]*overflow:hidden/, 'player fits the viewport on desktop');
   assert.match(css, /\.pb>\*\{flex-shrink:0\}/);
+});
+t('deploy access (ADR-0002): hook accepts only deploy vX.Y.Z or status', () => {
+  const run = (cmd) => cp.spawnSync('bash', [path.join(ROOT, 'ops/hibiki-deploy-hook')], { env: { ...process.env, SSH_ORIGINAL_COMMAND: cmd, HIBIKI_HOOK_DRYRUN: '1' }, encoding: 'utf8' });
+  assert.match(run('deploy v0.2.4').stdout, /would run: sudo -n \/usr\/local\/sbin\/hibiki-deploy v0\.2\.4/);
+  assert.match(run('status').stdout, /would run: curl/);
+  for (const bad of ['', 'bash', 'deploy main', 'deploy v0.2.4; id', 'deploy v0.2.4 && id', 'deploy v0.2', 'deploy $(id)', 'status; id', 'deploy v0.2.4\nid']) {
+    const r = run(bad); assert.equal(r.status, 2, `refused: ${JSON.stringify(bad)}`); assert.ok(!/would run/.test(r.stdout));
+  }
+});
+t('deploy access (ADR-0002): only an annotated tag at main HEAD with matching VERSION installs', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hdep-'));
+  const g = (cwd, ...a) => cp.execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'init.defaultBranch=main', ...a], { cwd, encoding: 'utf8' });
+  const up = path.join(tmp, 'up'); fs.mkdirSync(up); g(up, 'init', '-q');
+  const commit = (v) => { fs.writeFileSync(path.join(up, 'VERSION'), v + '\n'); fs.writeFileSync(path.join(up, 'install.sh'), '#!/bin/sh\necho INSTALLED $(cat VERSION)\n', { mode: 0o755 }); g(up, 'add', '-A'); g(up, 'commit', '-qm', v); };
+  commit('0.9.0'); g(up, 'tag', '-a', 'v0.9.0', '-m', 'old');
+  commit('0.9.1'); g(up, 'tag', 'v0.9.1'); // lightweight
+  commit('0.9.3'); g(up, 'tag', '-a', 'v0.9.2', '-m', 'wrong version');
+  g(up, 'tag', '-a', 'v0.9.3', '-m', 'good');
+  const dep = (tag) => cp.spawnSync('bash', [path.join(ROOT, 'ops/hibiki-deploy'), tag], { env: { ...process.env, HIBIKI_DEPLOY_SRC: path.join(tmp, 'src'), HIBIKI_DEPLOY_REPO: up, HIBIKI_DEPLOY_LOCK: path.join(tmp, 'lock') }, encoding: 'utf8' });
+  try {
+    assert.match(dep('v0.9.3').stdout, /INSTALLED 0\.9\.3/);
+    for (const [tag, why] of [['v0.9.0', /not main HEAD/], ['v0.9.1', /not an annotated tag/], ['v0.9.2', /does not match/], ['v9.9.9', /not an annotated tag/], ['main', /not a release tag/], ['v0.9.3;id', /not a release tag/]]) {
+      const r = dep(tag); assert.notEqual(r.status, 0, tag); assert.match(r.stderr, why, tag); assert.ok(!/INSTALLED/.test(r.stdout), tag);
+    }
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});
+t('deploy access (ADR-0002): manual workflow, pinned host key, narrow sudoers, forced-command key', () => {
+  const wf = read('.github/workflows/deploy.yml'), setup = read('ops/install-deploy-access.sh');
+  const on = wf.slice(wf.indexOf('\non:'), wf.indexOf('\npermissions:'));
+  assert.match(on, /workflow_dispatch/); assert.ok(!/\b(push|schedule|pull_request|release|workflow_run)\b/.test(on), 'manual only');
+  assert.match(wf, /StrictHostKeyChecking=yes/); assert.match(wf, /permissions:\n  contents: read/);
+  assert.ok(!/\$\{\{ inputs\.tag \}\}"?\s*$/m.test(wf.split('run:').slice(1).join('')), 'inputs reach shell only through env');
+  assert.match(setup, /NOPASSWD: \/usr\/local\/sbin\/hibiki-deploy"/); assert.match(setup, /visudo -c -f/);
+  assert.match(setup, /command="\/usr\/local\/sbin\/hibiki-deploy-hook",restrict/);
+  assert.match(read('ops/hibiki-deploy.pub'), /^ssh-ed25519 \S+ hibiki-deploy@github-actions\n?$/);
+  assert.match(read('ops/hibiki-deploy'), /if \[\[ "\$\(id -u\)" -ne 0 \]\]; then/, 'test overrides are ignored as root');
 });
 t('installer: preflight, fragment-first, nginx -t and health-check rollback', () => {
   assert.ok(sh.startsWith('#!/usr/bin/env bash') && /set -euo pipefail/.test(sh));

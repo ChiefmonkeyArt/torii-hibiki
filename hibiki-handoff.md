@@ -5,7 +5,7 @@
 **Release rule:** land through a merged PR, tag `v<VERSION>` on the merge commit, and the owner installs from the tag:
 
 ```bash
-cd ~/torii-hibiki 2>/dev/null || { git clone https://github.com/ChiefmonkeyArt/torii-hibiki.git ~/torii-hibiki && cd ~/torii-hibiki; }; git fetch --tags && git checkout v0.2.3 && sudo ./install.sh && curl -s https://chiefmonkey.art/hibiki/api/health
+cd ~/torii-hibiki 2>/dev/null || { git clone https://github.com/ChiefmonkeyArt/torii-hibiki.git ~/torii-hibiki && cd ~/torii-hibiki; }; git fetch --tags && git checkout v0.2.4 && sudo ./install.sh && curl -s https://chiefmonkey.art/hibiki/api/health
 ```
 
 The installer finds the owner npub in the Suite `.env` (`CONTINUUM_ADMIN_NPUB`) or Continuum's `admin_npub`; pass it as the first argument otherwise. It needs Node 22.13+ and npm.
@@ -14,7 +14,7 @@ The installer finds the owner npub in the Suite `.env` (`CONTINUUM_ADMIN_NPUB`) 
 
 **What the service does:** reads the owner's follows and where they post (NIP-65), stores 14 days of their public posts and reactions in SQLite, works out public features (circle, friend-of-friend, reactions, zaps, spam), and proxies images, video and link previews so third-party hosts never see the reader. It relays only events the owner signed in their own signer after confirming. It holds no keys.
 
-**Live check:** `curl -s https://chiefmonkey.art/hibiki/api/health` returns `"version":"0.2.3"` and `"img"` (the image backend); `curl -s https://chiefmonkey.art/torii/apps.json` lists `hibiki` at 0.2.3. Logs: `journalctl -u hibiki-feed -n 50`.
+**Live check:** `curl -s https://chiefmonkey.art/hibiki/api/health` returns `"version":"0.2.4"` and `"img"` (the image backend); `curl -s https://chiefmonkey.art/torii/apps.json` lists `hibiki` at 0.2.4. Logs: `journalctl -u hibiki-feed -n 50`.
 
 **Development:** `HIBIKI_DEV=1` (with owner, secret, data dir and origin in env) lets loopback requests skip sign-in; never set it on a VPS (the installer never writes it). Run `node service/src/server.mjs` and `node tools/dev-server.mjs` (serves `web/` with the production headers on :8790 and proxies the API). Tests: `npm test` (needs Node 22.13+ and `npm ci` in `service/`).
 
@@ -38,4 +38,12 @@ The installer finds the owner npub in the Suite `.env` (`CONTINUUM_ADMIN_NPUB`) 
 
 **v0.2.3:** Watch cards show a poster from imeta `image` (now read for kind 1 too) or else a preview frame: the browser loads only the video's metadata through the node (`#t=0.5`, `preload=metadata`, lazy, at most three at once). Clicking opens `watchModal`: the video fills a viewport-sized stage, with the panel (author, post, Reply/Repost/Like/zap total, replies, composer) beside it on desktop and below it on phones. Zapping itself is still a todo.
 
-**Next:** owner installs v0.2.3 and does phone acceptance, then P1 polish (see `hibiki-todo.md`).
+**Agent deploys (ADR-0002, v0.2.4):** once the owner has run `sudo ./ops/install-deploy-access.sh` on chiefmonkey.art, the agent installs a release only after the owner asks for that version in the session:
+
+```bash
+gh workflow run deploy.yml -R ChiefmonkeyArt/torii-hibiki -f action=deploy -f tag=vX.Y.Z && sleep 5 && gh run watch -R ChiefmonkeyArt/torii-hibiki $(gh run list -R ChiefmonkeyArt/torii-hibiki -w deploy.yml -L 1 --json databaseId -q '.[0].databaseId')
+```
+
+`-f action=status` prints the installed release and health with no sudo. Secrets: `HIBIKI_DEPLOY_SSH_KEY` (private half exists only there), `HIBIKI_DEPLOY_HOST`, `HIBIKI_DEPLOY_KNOWN_HOSTS` (pinned; fingerprints in the ADR). VPS side: forced-command key in `ubuntu`'s `authorized_keys` → `/usr/local/sbin/hibiki-deploy-hook` → `sudo -n /usr/local/sbin/hibiki-deploy <tag>` (root-owned clone `/opt/torii/src/torii-hibiki`; refuses unless the tag is annotated, at origin/main HEAD, and matches `VERSION`). Journal tags: `hibiki-deploy-hook`, `hibiki-deploy`. Revoke: `sudo sed -i '/hibiki-deploy-hook/d' ~/.ssh/authorized_keys && sudo rm -f /etc/sudoers.d/hibiki-deploy`. Quest's keys never touch Hibiki.
+
+**Next:** owner runs the v0.2.4 setup, agent proves it with a `status` run, then phone acceptance and P1 polish (zaps next; see `hibiki-todo.md`).
