@@ -136,9 +136,9 @@
   // ---------- link previews (lazy, through the node) ----------
   var previews = {};
   var io = 'IntersectionObserver' in window ? new IntersectionObserver(function (es) { es.forEach(function (e) { if (e.isIntersecting) { io.unobserve(e.target); e.target._load(); } }); }, { rootMargin: '400px' }) : null;
-  function linkCard(l, big) {
+  function linkCard(l, big, onPick) {
     var th = h('span', { class: 'th' }), lb = h('span', { class: 'lb' }, h('span', { class: 'm' }, host(l.url)), h('b', {}, l.url.replace(/^https:\/\//, '').slice(0, 80)));
-    var card = btn([th, lb], { class: 'lnk' }, function (e) { e.stopPropagation(); tell('feed.open', { url: l.url }); });
+    var card = btn([th, lb], { class: 'lnk' }, function (e) { e.stopPropagation(); if (onPick) onPick(); else tell('feed.open', { url: l.url }); });
     card._load = function () {
       var p = previews[l.url] || (previews[l.url] = rpc('feed.link', { url: l.url, sig: l.sig }));
       p.then(function (x) {
@@ -188,17 +188,18 @@
       content,
       h('div', { class: 'acts' },
         act('Reply' + (it.replies ? ' ' + fmt(it.replies) : ''), {}, function () { select(it, 'replies'); }),
-        act('Repost', { 'aria-pressed': S.reposted[it.id] ? 'true' : 'false' }, function () { repost(it); }),
-        act('\u2665 ' + fmt((it.f.ge || 0) + (S.liked[it.id] ? 1 : 0)), { 'aria-pressed': S.liked[it.id] ? 'true' : 'false', 'aria-label': 'Like' }, function () { like(it); }),
+        act(mine(it, 'r') ? 'Reposted' : 'Repost', { 'aria-pressed': mine(it, 'r') ? 'true' : 'false' }, function () { if (!mine(it, 'r')) repost(it); }),
+        act('\u2665 ' + fmt((it.f.ge || 0) + (S.liked[it.id] && !(it.me && it.me.l) ? 1 : 0)), { 'aria-pressed': mine(it, 'l') ? 'true' : 'false', 'aria-label': mine(it, 'l') ? 'Liked' : 'Like' }, function () { if (!mine(it, 'l')) like(it); }),
         it.f.z ? h('span', { class: 'm', style: 'padding:5px 8px' }, '\u26A1 ' + fmt(it.f.z)) : null,
         viaLine(it)),
-      opts.peek !== false && it.peek && it.peek.length ? h('div', { class: 'peek' }, it.peek.map(replyRow), btn(it.replies > it.peek.length ? 'View ' + (it.replies - it.peek.length) + ' more replies' : 'Open conversation', { class: 'more', style: 'text-align:left' }, function (e) { e.stopPropagation(); select(it, 'replies'); })) : null);
+      opts.peek !== false && it.peek && it.peek.length ? h('div', { class: 'peek' }, it.peek.map(replyRow), btn(it.replies > it.peek.length ? 'View all ' + fmt(it.replies) + ' replies' : 'Open conversation', { class: 'more', style: 'text-align:left' }, function (e) { e.stopPropagation(); select(it, 'replies'); })) : null);
     art.addEventListener('click', function () { select(it); });
     art.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target === art) select(it); });
     return art;
   }
   function replyRow(r) {
-    return h('div', { class: 'rp' }, avatar(r.pubkey, 'sm'), h('div', {}, h('b', {}, prof(r.pubkey).name), ' ', h('span', { class: 'm' }, ago(r.created_at)), h('div', { class: 'txt' }, richText(r.content.slice(0, 280), true))));
+    var pop = (r.likes || 0) + (r.reposts || 0);
+    return h('div', { class: 'rp' }, avatar(r.pubkey, 'sm'), h('div', {}, h('b', {}, prof(r.pubkey).name), ' ', r.circle ? h('span', { class: 'tag f' }, 'circle') : null, ' ', h('span', { class: 'm' }, ago(r.created_at) + (pop ? ' \u00B7 \u2665 ' + fmt(pop) : '') + (r.replies ? ' \u00B7 ' + fmt(r.replies) + ' repl' + (r.replies === 1 ? 'y' : 'ies') : '')), h('div', { class: 'txt' }, richText(r.content.slice(0, 280), true))));
   }
   function quoteCard(q) {
     return h('div', { class: 'quote' }, h('div', { class: 'nh' }, avatar(q.pubkey, 'xs'), h('b', { style: 'font-size:13px' }, prof(q.pubkey).name), h('span', { class: 'm' }, '\u00B7 ' + ago(q.created_at))), h('div', { class: 'txt' }, richText(q.content.slice(0, 400), true)), (q.media || []).filter(function (m) { return m.type === 'image'; }).slice(0, 1).map(function (m) { return h('div', { class: 'ig n1g' }, h('img', { src: m.src, alt: m.alt || '', loading: 'lazy' })); }));
@@ -225,11 +226,11 @@
   // ---------- actions (each goes through the shell's confirm + sign) ----------
   function like(it) {
     rpc('feed.propose', { kind: 7, content: '+', tags: [['e', it.id], ['p', it.pubkey], ['k', String(it.kind)]], title: 'Like this post?', preview: '\u2665 ' + prof(it.pubkey).name + ': ' + it.content.slice(0, 160) })
-      .then(function () { S.liked[it.id] = 1; render(); toast('Liked'); }, quiet);
+      .then(function () { S.liked[it.id] = 1; patch(it); toast('Liked'); }, quiet);
   }
   function repost(it) {
     rpc('feed.propose', { kind: 6, content: '', tags: [['e', it.id], ['p', it.pubkey]], title: 'Repost to your followers?', preview: prof(it.pubkey).name + ': ' + it.content.slice(0, 200) })
-      .then(function () { S.reposted[it.id] = 1; render(); toast('Reposted'); }, quiet);
+      .then(function () { S.reposted[it.id] = 1; patch(it); toast('Reposted'); }, quiet);
   }
   function sendReply(root, parentEv, text) {
     var tags = [['e', root.id, '', 'root', root.pubkey]];
@@ -238,65 +239,92 @@
     Object.keys(ps).forEach(function (p) { tags.push(['p', p]); });
     return rpc('feed.propose', { kind: 1, content: text, tags: tags, title: 'Reply to ' + prof((parentEv || root).pubkey).name + '?', preview: text });
   }
+  // Redraw just this post's cards (feed and modal); the rest of the page and its
+  // scroll position stay put.
+  function patch(it) {
+    document.querySelectorAll('.n1[data-id="' + it.id + '"]').forEach(function (el) {
+      var fresh = noteCard(it, el.querySelector('.peek') ? {} : { peek: false });
+      if (el.classList.contains('sel')) fresh.classList.add('sel');
+      el.replaceWith(fresh);
+    });
+  }
+  function mine(it, k) { return !!((k === 'l' ? S.liked : S.reposted)[it.id] || (it.me && it.me[k])); }
   function quiet(e) { if (e && e.message !== 'cancelled') toast('Not sent: ' + e.message); }
 
   // ---------- selection + right panel ----------
-  function select(it, tab, idx) {
-    S.sel = it; S.tab = tab || (it.media.some(function (m) { return m.type === 'image'; }) ? 'media' : it.links.length ? 'link' : 'replies'); S.idx = idx || 0;
-    if (S.section !== 'circle' && !inModal) { openModal(it); return; }
-    document.querySelectorAll('.n1.sel').forEach(function (n) { n.classList.remove('sel'); });
-    var el = document.querySelector('.n1[data-id="' + it.id + '"]'); if (el) el.classList.add('sel');
+  // One scrolling column: the post's photos or link summary on top, then every
+  // reply lined up underneath (people you know first, then the most popular).
+  function select(it, focus, idx) {
+    S.sel = it; S.focus = focus || null; S.idx = idx || 0;
+    if (!inModal && !(S.section === 'circle' || (it.story && S.section === 'news'))) { openModal(it); return; }
+    document.querySelectorAll('.n1.sel,.card.sel').forEach(function (n) { n.classList.remove('sel'); });
+    var el = document.querySelector('[data-id="' + it.id + '"]'); if (el) el.classList.add('sel');
     renderPanel();
   }
   var panelEl = null;
+  function closePanel() { if (inModal) return closeModal(); S.sel = null; document.querySelectorAll('.n1.sel,.card.sel').forEach(function (n) { n.classList.remove('sel'); }); renderPanel(); }
   function renderPanel() {
     if (!panelEl) return;
     clear(panelEl);
     var it = S.sel;
-    if (!it) { add(panelEl, h('div', { class: 'pempty' }, h('div', { class: 'k', style: 'font-size:34px;color:var(--a)' }, '\u97FF'), h('p', {}, 'Pick a post to see its photos, conversation or link here.'))); panelEl.classList.remove('open'); return; }
+    if (!it) {
+      panelEl.classList.remove('open');
+      add(panelEl, panelEl._empty ? panelEl._empty() : h('div', { class: 'pempty' }, h('div', { class: 'k', style: 'font-size:34px;color:var(--a)' }, '\u97FF'), h('p', {}, 'Pick a post to see its photos, link and every reply here.')));
+      return;
+    }
     panelEl.classList.add('open');
-    var imgs = it.media.filter(function (m) { return m.type === 'image'; });
-    var tabs = [];
-    if (imgs.length) tabs.push(['media', 'Media \u00B7 ' + imgs.length]);
-    tabs.push(['replies', 'Replies' + (it.replies ? ' \u00B7 ' + it.replies : '')]);
-    if (it.links.length) tabs.push(['link', 'Link']);
-    if (!tabs.some(function (t) { return t[0] === S.tab; })) S.tab = tabs[0][0];
-    add(panelEl, h('div', { class: 'ptabs' }, tabs.map(function (t) { return btn(t[1], { 'aria-pressed': S.tab === t[0] ? 'true' : 'false' }, function () { S.tab = t[0]; renderPanel(); }); }),
-      h('span', { class: 'm', style: 'margin-left:auto' }, prof(it.pubkey).name + ' \u00B7 ' + ago(it.created_at)), btn('\u2715', { class: 'more', 'aria-label': 'Close panel', style: 'margin-left:8px;color:var(--tx3)' }, function () { S.sel = null; document.querySelectorAll('.n1.sel').forEach(function (n) { n.classList.remove('sel'); }); renderPanel(); })));
+    add(panelEl, h('div', { class: 'ptabs' }, avatar(it.pubkey, 'xs'), h('b', { style: 'font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, it.story ? (it.sharers.length > 1 ? 'Shared by ' + it.sharers.length + ' people' : 'Shared by ' + prof(it.pubkey).name) : prof(it.pubkey).name),
+      h('span', { class: 'm', style: 'margin-left:6px;white-space:nowrap' }, ago(it.created_at)),
+      btn('\u2715', { class: 'more', 'aria-label': 'Close panel', style: 'margin-left:auto;color:var(--tx3)' }, closePanel)));
     var pb = h('div', { class: 'pb' });
     panelEl.appendChild(pb);
-    if (S.tab === 'media') mediaPanel(pb, it, imgs);
-    else if (S.tab === 'link') linkPanel(pb, it);
-    else repliesPanel(pb, it);
+    if (it.story) return storyPanel(pb, it);
+    var imgs = it.media.filter(function (m) { return m.type === 'image'; });
+    if (plain(it.content)) pb.appendChild(h('div', { class: 'txt ptxt' }, richText(it.content, true)));
+    if (imgs.length) mediaPanel(pb, it, imgs);
+    else if (it.links.length) pb.appendChild(linkSummary(it.links[0]));
+    repliesPanel(pb, it);
   }
   function mediaPanel(pb, it, imgs) {
-    var i = Math.min(S.idx || 0, imgs.length - 1), m = imgs[i];
-    var view = h('div', { class: 'viewer' }, h('img', { src: m.full || m.src, alt: m.alt || 'Image' }));
-    if (imgs.length > 1) {
-      view.appendChild(btn('\u2039', { class: 'nav-l', 'aria-label': 'Previous' }, function () { S.idx = (i + imgs.length - 1) % imgs.length; renderPanel(); }));
-      view.appendChild(btn('\u203A', { class: 'nav-r', 'aria-label': 'Next' }, function () { S.idx = (i + 1) % imgs.length; renderPanel(); }));
+    var box = h('div', { class: 'pmedia' });
+    function draw() {
+      clear(box);
+      var i = Math.min(S.idx || 0, imgs.length - 1), m = imgs[i];
+      var view = h('div', { class: 'viewer' }, h('img', { src: m.full || m.src, alt: m.alt || 'Image' }));
+      if (imgs.length > 1) {
+        view.appendChild(btn('\u2039', { class: 'nav-l', 'aria-label': 'Previous' }, function () { S.idx = (i + imgs.length - 1) % imgs.length; draw(); }));
+        view.appendChild(btn('\u203A', { class: 'nav-r', 'aria-label': 'Next' }, function () { S.idx = (i + 1) % imgs.length; draw(); }));
+      }
+      add(box, [view, imgs.length > 1 ? h('div', { class: 'thumbs' }, imgs.slice(0, 8).map(function (x, j) { return btn(h('img', { src: x.src, alt: '' }), { 'aria-pressed': j === i ? 'true' : 'false', 'aria-label': 'Image ' + (j + 1) }, function () { S.idx = j; draw(); }); })) : null,
+        h('div', { class: 'm' }, (m.alt ? m.alt + ' \u00B7 ' : '') + 'via your node \u00B7 metadata stripped')]);
     }
-    add(pb, [view, imgs.length > 1 ? h('div', { class: 'thumbs' }, imgs.slice(0, 8).map(function (x, j) { return btn(h('img', { src: x.src, alt: '' }), { 'aria-pressed': j === i ? 'true' : 'false', 'aria-label': 'Image ' + (j + 1) }, function () { S.idx = j; renderPanel(); }); })) : null,
-      h('div', {}, h('div', { style: 'font-size:13.5px' }, m.alt || plain(it.content).slice(0, 120)), h('div', { class: 'm' }, (m.alt ? 'Alt text from ' + prof(it.pubkey).name + ' \u00B7 ' : '') + 'via your node \u00B7 metadata stripped'))]);
-  }
-  function linkPanel(pb, it) {
-    var l = it.links[0];
-    var box = h('div', { style: 'display:flex;flex-direction:column;gap:12px;flex:1' }, h('p', { class: 'm' }, 'Fetching preview through your node\u2026'));
+    draw();
     pb.appendChild(box);
+  }
+  // Link preview with the node's free TL;DR (picked from the article text, no AI).
+  function linkSummary(l, big) {
+    var box = h('div', { class: 'tsum' + (big ? ' big' : '') }, h('p', { class: 'm' }, 'Reading the article through your node\u2026'));
     (previews[l.url] || (previews[l.url] = rpc('feed.link', { url: l.url, sig: l.sig }))).then(function (x) {
       clear(box);
-      add(box, [x.image ? h('div', { class: 'viewer', style: 'min-height:200px;flex:0 0 auto;max-height:260px' }, h('img', { src: x.image, alt: '' })) : null,
-        h('span', { class: 'kb', style: 'align-self:flex-start;background:var(--chip);color:var(--tx2);border-color:var(--bd2)' }, (x.site || host(l.url)).toUpperCase() + (x.readMinutes ? ' \u00B7 ' + x.readMinutes + ' MIN' : '')),
-        h('div', { style: 'font-size:22px;font-weight:700;line-height:1.25;letter-spacing:-.01em' }, x.title || l.url),
-        h('div', { class: 'm' }, 'Fetched by your node, trackers removed'),
-        x.description ? h('div', { class: 's', style: 'font-size:14.5px;line-height:1.65' }, x.description) : null,
-        h('div', { style: 'display:flex;gap:8px;margin-top:auto' }, btn('Open original', { class: 'btn p', style: 'flex:1' }, function () { tell('feed.open', { url: l.url }); }))]);
+      add(box, [x.image ? h('div', { class: 'tsimg' }, h('img', { src: x.image, alt: '' })) : null,
+        h('span', { class: 'm', style: 'text-transform:uppercase;letter-spacing:.06em;font-size:11px' }, (x.site || host(l.url)) + (x.readMinutes ? ' \u00B7 ' + x.readMinutes + ' min read' : '')),
+        h('div', { class: 'tst' }, x.title || l.url),
+        x.tldr && x.tldr.length ? h('div', { class: 'tldr' }, h('span', { class: 'kb' }, 'TL;DR'), h('ul', {}, x.tldr.map(function (t) { return h('li', {}, t); })), h('span', { class: 'm' }, 'Key sentences picked from the article by your node. No AI, nothing sent elsewhere.'))
+          : x.description ? h('div', { class: 's', style: 'font-size:14px;line-height:1.6' }, x.description) : null,
+        btn('Read on ' + (x.site || host(l.url)), { class: 'btn p', style: 'align-self:flex-start' }, function () { tell('feed.open', { url: l.url }); })]);
     }, function () { clear(box); add(box, [h('p', { class: 'm' }, 'No preview for this link.'), btn('Open original', { class: 'btn' }, function () { tell('feed.open', { url: l.url }); })]); });
+    return box;
+  }
+  function storyPanel(pb, c) {
+    pb.appendChild(linkSummary({ url: c.url, sig: c.sig }, true));
+    pb.appendChild(h('div', { class: 'h6', style: 'margin-top:6px' }, 'Shared in your circle'));
+    c.notes.forEach(function (n) { pb.appendChild(replyRow(n)); });
   }
   function repliesPanel(pb, it) {
-    add(pb, h('div', { class: 'thr', style: 'padding-bottom:10px;border-bottom:1px solid var(--bd2)' }, avatar(it.pubkey, 'sm'), h('div', { class: 's', style: 'font-size:13px' }, prof(it.pubkey).name + ': ' + plain(it.content).slice(0, 140))));
-    var list = h('div', { style: 'display:flex;flex-direction:column;gap:12px' }, h('p', { class: 'm' }, 'Loading the conversation\u2026'));
-    pb.appendChild(list);
+    var head = h('div', { class: 'h6 rh' }, 'Replies' + (it.replies ? ' \u00B7 ' + fmt(it.replies) : ''));
+    var list = h('div', { class: 'rlist' }, h('p', { class: 'm' }, 'Loading the conversation\u2026'));
+    add(pb, [head, list]);
+    if (S.focus === 'replies') setTimeout(function () { pb.scrollTop = head.offsetTop - pb.offsetTop - 8; }, 0); // panel only, never the page
     var target = it;
     var ta = h('textarea', { rows: '1', placeholder: 'Reply as ' + (S.me && S.me.profile ? S.me.profile.name : 'you') + '\u2026', 'aria-label': 'Reply' });
     var send = btn('Reply', { class: 'btn p sm' }, function () {
@@ -310,25 +338,21 @@
         if (S.sel !== it) return;
         Object.assign(S.profiles, t.profiles || {});
         clear(list);
-        var kids = {}, top = [];
-        t.replies.forEach(function (r) { if (r.parent && r.parent !== it.id && t.replies.some(function (x) { return x.id === r.parent; })) (kids[r.parent] = kids[r.parent] || []).push(r); else top.push(r); });
-        var circle = top.filter(function (r) { return r.circle; }).sort(function (a, b) { return a.created_at - b.created_at; });
-        var others = top.filter(function (r) { return !r.circle; }).sort(function (a, b) { return b.likes - a.likes || a.created_at - b.created_at; });
+        // Server order is already: people you know, then most popular, then oldest.
+        var ids = {}, kids = {}, top = [];
+        t.replies.forEach(function (r) { ids[r.id] = 1; });
+        t.replies.forEach(function (r) { if (r.parent && r.parent !== it.id && ids[r.parent]) (kids[r.parent] = kids[r.parent] || []).push(r); else top.push(r); });
         function row(r, depth) {
+          var pop = (r.likes || 0) + (r.reposts || 0);
           var el = h('div', { class: depth ? 'ind' : '' }, h('div', { class: 'thr' }, avatar(r.pubkey, 'sm'), h('div', { style: 'min-width:0' }, h('b', {}, prof(r.pubkey).name), ' ', r.circle ? h('span', { class: 'tag f' }, 'circle') : null, ' ', h('span', { class: 'm' }, ago(r.created_at)),
             h('div', { class: 'txt', style: 'font-size:13.5px;margin:2px 0 0' }, richText(r.content, true)),
             (r.media || []).filter(function (m) { return m.type === 'image'; }).map(function (m) { return h('div', { class: 'ig n1g' }, h('img', { src: m.src, alt: m.alt || '', loading: 'lazy' })); }),
-            h('div', { class: 'm', style: 'margin-top:4px' }, btn('Reply', { class: 'more', style: 'font-weight:500;color:var(--tx3)' }, function () { target = r; ta.placeholder = 'Reply to ' + prof(r.pubkey).name + '\u2026'; ta.focus(); }), r.likes ? ' \u00B7 \u2665 ' + r.likes : ''))));
-          (kids[r.id] || []).sort(function (a, b) { return a.created_at - b.created_at; }).slice(0, 6).forEach(function (k) { el.appendChild(row(k, depth + 1)); });
+            h('div', { class: 'm', style: 'margin-top:4px' }, btn('Reply', { class: 'more', style: 'font-weight:500;color:var(--tx3)' }, function () { target = r; ta.placeholder = 'Reply to ' + prof(r.pubkey).name + '\u2026'; ta.focus(); }), pop ? ' \u00B7 \u2665 ' + fmt(pop) : ''))));
+          if (depth < 4) (kids[r.id] || []).forEach(function (k) { el.appendChild(row(k, depth + 1)); });
           return el;
         }
         if (!top.length) list.appendChild(h('p', { class: 'm' }, 'No replies yet. Start the conversation.'));
-        circle.forEach(function (r) { list.appendChild(row(r, 0)); });
-        if (others.length) {
-          var more = h('div', { class: 'box row' }, h('span', { class: 's' }, others.length + ' repl' + (others.length === 1 ? 'y' : 'ies') + ' from outside your circle'), btn('Show', { class: 'more' }, function () { more.replaceWith.apply(more, others.slice(0, 60).map(function (r) { return row(r, 0); })); }));
-          if (!circle.length) others.slice(0, 5).forEach(function (r) { list.appendChild(row(r, 0)); }), others = others.slice(5);
-          if (others.length) list.appendChild(more);
-        }
+        top.slice(0, 300).forEach(function (r) { list.appendChild(row(r, 0)); });
         if (t.hiddenSpam) list.appendChild(h('p', { class: 'm' }, t.hiddenSpam + ' repl' + (t.hiddenSpam === 1 ? 'y' : 'ies') + ' hidden as likely spam'));
         if (!live) load(true);
       }, function () { clear(list); list.appendChild(h('p', { class: 'm' }, 'Could not load replies.')); });
@@ -339,19 +363,17 @@
   // ---------- modal (used outside Circle, and for the reader/player) ----------
   var modalEl = null, inModal = false, pagePanel = null;
   function closeModal() { if (modalEl) { modalEl.remove(); modalEl = null; } if (inModal) { inModal = false; panelEl = pagePanel; } }
-  function modal(content) {
+  function modal(content, bare) {
     closeModal();
-    modalEl = h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true' }, h('div', { class: 'glass' }, h('div', { class: 'row', style: 'margin-bottom:8px' }, h('span'), btn('\u2715', { class: 'btn sm', 'aria-label': 'Close' }, closeModal)), content));
+    modalEl = h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true' }, h('div', { class: 'glass' }, bare ? null : h('div', { class: 'row', style: 'margin-bottom:8px' }, h('span'), btn('\u2715', { class: 'btn sm', 'aria-label': 'Close' }, closeModal)), content));
     modalEl.addEventListener('click', function (e) { if (e.target === modalEl) closeModal(); });
     document.body.appendChild(modalEl);
   }
   function openModal(it) {
     if (it.kind === 30023) return openReader(it);
-    var wrap = h('div', { class: 'lay', style: 'grid-template-columns:minmax(0,1fr) 380px' });
     var p = h('aside', { class: 'glass panel open', style: 'position:static;height:70vh;display:flex' });
-    wrap.appendChild(h('div', {}, noteCard(it, { peek: false })));
-    wrap.appendChild(p);
-    modal(wrap);
+    var wrap = it.story ? h('div', { class: 'smod' }, p) : h('div', { class: 'lay', style: 'grid-template-columns:minmax(0,1fr) 380px' }, h('div', {}, noteCard(it, { peek: false })), p);
+    modal(wrap, it.story);
     pagePanel = panelEl; panelEl = p; inModal = true; S.sel = it; renderPanel();
   }
 
@@ -478,7 +500,7 @@
     if (S.q) all = all.filter(function (x) { return (x.content || '').toLowerCase().indexOf(S.q) >= 0 || prof(x.pubkey).name.toLowerCase().indexOf(S.q) >= 0; });
     var feed = h('div', { class: 'feed' },
       h('div', { class: 'fh' }, h('span', { class: 'seg', role: 'group', 'aria-label': 'Filter' }, [['all', 'Original posts'], ['media', 'With media'], ['follow', 'Following only']].map(function (f) { return btn(f[1], { 'aria-pressed': S.filter === f[0] ? 'true' : 'false' }, function () { S.filter = f[0]; S.shown = 30; render(); }); })),
-        h('span', { class: 'row' }, h('span', { class: 'm' }, S.q ? all.length + ' matching \u201C' + S.q + '\u201D' : all.length + ' posts \u00B7 replies hidden'), signalPill())));
+        h('span', { class: 'row' }, h('span', { class: 'm' }, S.q ? all.length + ' matching \u201C' + S.q + '\u201D' : all.length + ' original posts'), signalPill())));
     all.slice(0, S.shown).forEach(function (it) { feed.appendChild(noteCard(it)); });
     if (all.length > S.shown) feed.appendChild(btn('Show more', { class: 'btn', style: 'align-self:center' }, function () { S.shown += 30; render(); }));
     if (!all.length) feed.appendChild(h('div', { class: 'glass empty' }, S.q ? 'Nothing loaded matches that.' : 'No original posts yet. Your node checks for new ones every few minutes.'));
@@ -487,18 +509,28 @@
     renderPanel();
   }
 
+  // A shared link becomes a "story": picking it shows the TL;DR panel.
+  function story(c) {
+    return c._s || (c._s = { story: 1, id: 's' + c.url, url: c.url, sig: c.sig, pubkey: c.sharers[0], sharers: c.sharers, created_at: c.created_at, notes: c.notes, media: [], links: [] });
+  }
   function clusterCard(c) {
-    var card = h('div', { class: 'glass card' }, linkCard({ url: c.url, sig: c.sig }),
+    var st = story(c), pick = function () { select(st); };
+    var card = h('div', { class: 'glass card pick' + (S.sel && S.sel.id === st.id ? ' sel' : ''), 'data-id': st.id }, linkCard({ url: c.url, sig: c.sig }, false, pick),
       h('div', { class: 'row' }, h('span', { class: 'via', style: 'margin-left:0' }, stack(c.sharers), 'Shared by ' + (c.sharers.length === 1 ? prof(c.sharers[0]).name : c.sharers.length + ' people')), h('span', { class: 'm' }, ago(c.created_at))),
       c.notes.slice(0, 2).map(function (n) { return h('div', { class: 'rp' }, avatar(n.pubkey, 'xs'), h('div', { class: 'txt', style: 'margin:0;font-size:13px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden' }, richText(n.content.replace(c.url, '').trim(), true))); }));
+    card.addEventListener('click', function (e) { if (!e.target.closest('a,button')) pick(); });
     return card;
   }
   function news(d) {
     var list = ranked(d.clusters);
     var main = h('div', {}, sec('In the news', 'Links your circle is sharing, grouped by story'), list.length ? h('div', { class: 'grid' }, list.map(clusterCard)) : h('div', { class: 'glass empty' }, 'No shared links yet.'));
-    var side = h('aside', { class: 'side' }, sec('Mekiki', 'Curators in your circle'),
-      d.curators.length ? d.curators.map(function (c) { return h('div', { class: 'glass card', style: 'flex-direction:row;align-items:center' }, avatar(c.pubkey, 'sm'), h('div', { style: 'min-width:0' }, h('b', {}, c.title || 'Collection'), h('div', { class: 'm' }, prof(c.pubkey).name + ' \u00B7 ' + c.size + ' items')), h('span', { class: 'tag f', style: 'margin-left:auto' }, '\u76EE\u5229\u304D')); }) : h('p', { class: 'm' }, 'When people you follow publish curated lists (NIP-51 sets), they appear here.'));
-    pg.appendChild(h('div', { class: 'two' }, main, side));
+    function side() { return h('div', { class: 'side' }, h('p', { class: 'm', style: 'margin:0 0 6px' }, 'Tap a story for a quick summary.'), sec('Mekiki', 'Curators in your circle'),
+      d.curators.length ? d.curators.map(function (c) { return h('div', { class: 'glass card', style: 'flex-direction:row;align-items:center' }, avatar(c.pubkey, 'sm'), h('div', { style: 'min-width:0' }, h('b', {}, c.title || 'Collection'), h('div', { class: 'm' }, prof(c.pubkey).name + ' \u00B7 ' + c.size + ' items')), h('span', { class: 'tag f', style: 'margin-left:auto' }, '\u76EE\u5229\u304D')); }) : h('p', { class: 'm' }, 'When people you follow publish curated lists (NIP-51 sets), they appear here.')); }
+    panelEl = h('aside', { class: 'glass panel', 'aria-label': 'Story' });
+    panelEl._empty = side;
+    if (S.sel && !S.sel.story) S.sel = null;
+    pg.appendChild(h('div', { class: 'lay' }, main, panelEl));
+    renderPanel();
   }
   function poster(it) { var m = it.media.find(function (x) { return x.thumb; }) || it.media.find(function (x) { return x.type === 'image'; }); return m ? (m.thumb || m.src) : null; }
   function videoCard(it) {
@@ -570,6 +602,7 @@
         sec('Preview', 'Top of Circle with these settings'), preview),
       h('aside', { class: 'side' }, sec('This week'), stats, sec('Loudest voices'), voices,
         sec('Appearance'), h('div', { class: 'glass card' }, h('div', { class: 'row' }, h('span', {}, 'Theme'), h('span', { class: 'seg' }, ['light', 'dark', 'auto'].map(function (t) { return btn(t[0].toUpperCase() + t.slice(1), { 'aria-pressed': (t === theme) ? 'true' : 'false' }, function () { tell('feed.settheme', { theme: t }); setTimeout(render, 50); }); }))),
+          h('div', { class: 'row' }, h('span', {}, 'Ask before liking'), h('span', { class: 'seg' }, [[true, 'On'], [false, 'Off']].map(function (o) { return btn(o[1], { 'aria-pressed': S.askLikes === o[0] ? 'true' : 'false' }, function () { S.askLikes = o[0]; tell('feed.pref', { askLikes: o[0] }); render(); }); }))),
           h('div', { class: 'row' }, h('span', { class: 'm' }, 'Hibiki v' + (S.version || '')), btn('Sign out', { class: 'btn sm' }, function () { tell('feed.logout'); }))))));
     refreshPreview();
     if (!S.data.circle) load('circle').then(refreshPreview, function () {});
@@ -600,7 +633,7 @@
           h('div', { class: 'presets' }, Object.keys(PRESETS).map(function (n) { return btn([h('b', {}, n), h('div', { class: 'm' }, { Calm: 'Fewer, slower, closest friends', Balanced: 'The default mix', Lively: 'What is happening right now', Explorer: 'More friends of friends' }[n])], { 'aria-pressed': chosen === n ? 'true' : 'false' }, function () { chosen = n; draw(); }); })),
           btn('Continue', { class: 'btn p' }, function () { setWeights(PRESETS[chosen]); step = 2; draw(); })]);
       } else {
-        add(box, [dots(), h('div', { class: 'h6' }, 'Step 3 of 3'), h('h2', {}, 'You are set'), h('p', { class: 's' }, 'Circle shows original posts from people you follow, with a reply or two from friends underneath. Tap any post to see its photos, conversation or link on the right. The small glowing dot on each post tells you why it is there.'),
+        add(box, [dots(), h('div', { class: 'h6' }, 'Step 3 of 3'), h('h2', {}, 'You are set'), h('p', { class: 's' }, 'Circle shows original posts from people you follow, with the best replies underneath: people you know first, then the most popular. Tap any post to see its photos, link summary and every reply on the right. The small glowing dot on each post tells you why it is there.'),
           btn('Start reading', { class: 'btn p' }, function () { tell('feed.onboarded'); wrap.remove(); go('circle'); })]);
       }
     }
@@ -609,7 +642,7 @@
 
   var started = false;
   function init(d) {
-    S.me = d.me; S.weights = R.weights(d.tune || R.DEFAULTS); S.version = d.version || (d.me && d.me.version);
+    S.me = d.me; S.weights = R.weights(d.tune || R.DEFAULTS); S.version = d.version || (d.me && d.me.version); S.askLikes = d.askLikes !== false;
     document.documentElement.dataset.theme = d.theme || 'light';
     if (!d.me || !d.me.signedIn) return;
     if (S.me.profile) S.profiles[S.me.owner] = S.me.profile;

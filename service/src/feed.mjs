@@ -14,6 +14,18 @@ const H = 3600;
 const SECTIONS = ['today', 'circle', 'news', 'watch', 'listen', 'read'];
 const MENTION = /nostr:(npub1[02-9ac-hj-np-z]{58}|nprofile1[02-9ac-hj-np-z]+|note1[02-9ac-hj-np-z]{58}|nevent1[02-9ac-hj-np-z]+|naddr1[02-9ac-hj-np-z]+)/g;
 
+/**
+ * Reply order everywhere (peek and panel): people you follow first, then by
+ * popularity (likes + 2x reposts + 2x replies + zaps on a log scale), then oldest
+ * first so conversations read in order when nothing stands out.
+ */
+export function replyScore(r) {
+  return (r.likes || 0) + 2 * (r.reposts || 0) + 2 * (r.replies || 0) + Math.log10(1 + (r.zaps || 0));
+}
+export function orderReplies(list) {
+  return list.slice().sort((a, b) => (b.circle ? 1 : 0) - (a.circle ? 1 : 0) || replyScore(b) - replyScore(a) || a.created_at - b.created_at);
+}
+
 export function spamScore(ev, dupes) {
   let s = 1;
   const tags = ev.tags.filter((t) => t[0] === 't').length;
@@ -39,7 +51,7 @@ export function makeFeed({ cfg, store, ingest, signer }) {
 
   /** Engagement on a set of ids, split into circle and wider audience. */
   function engagement(ids) {
-    const m = new Map(ids.map((id) => [id, { ce: new Set(), ge: 0, z: 0, replies: 0, via: [] }]));
+    const m = new Map(ids.map((id) => [id, { ce: new Set(), ge: 0, z: 0, rp: 0, replies: 0, via: [], me: {} }]));
     if (!ids.length) return m;
     const set = new Set(ids);
     for (let i = 0; i < ids.length; i += 200) {
@@ -55,7 +67,11 @@ export function makeFeed({ cfg, store, ingest, signer }) {
         if (e.kind === 7 && e.content === '-') continue;
         x.ge += e.kind === 6 ? 2 : 1;
         x.z += sats;
-        if (g.follows.has(who) || who === cfg.owner) {
+        if (e.kind === 6) x.rp++;
+        // The owner's own likes and reposts mark the post as theirs but do not
+        // boost it: liking something must not reshuffle your own feed.
+        if (who === cfg.owner) { if (e.kind === 7) x.me.l = 1; else if (e.kind === 6) x.me.r = 1; continue; }
+        if (g.follows.has(who)) {
           if (!x.ce.has(who)) x.via.push({ pk: who, how: e.kind === 6 ? 'reposted' : e.kind === 9735 ? 'zapped' : 'liked' });
           x.ce.add(who);
         }
@@ -97,7 +113,7 @@ export function makeFeed({ cfg, store, ingest, signer }) {
   /** Core item shape shared by every section. */
   function item(ev, eng, dupes, extra = {}) {
     const { media, links } = extract(ev);
-    const e = eng.get(ev.id) || { ce: new Set(), ge: 0, z: 0, replies: 0, via: [] };
+    const e = eng.get(ev.id) || { ce: new Set(), ge: 0, z: 0, rp: 0, replies: 0, via: [], me: {} };
     const cw = ev.tags.find((t) => t[0] === 'content-warning');
     const limit = ev.kind === 30023 ? 1200 : 4000;
     return {
@@ -113,6 +129,7 @@ export function makeFeed({ cfg, store, ingest, signer }) {
       quotes: quoteRefs(ev.content),
       replies: e.replies,
       via: e.via.slice(0, 3),
+      me: e.me.l || e.me.r ? e.me : undefined,
       f: { c: g.follows.has(ev.pubkey) || ev.pubkey === cfg.owner ? 1 : 0, h: g.hop2.get(ev.pubkey) || 0, ce: e.ce.size, ge: e.ge, z: e.z, a: Math.max(0, (now() - ev.created_at) / H), s: spamScore(ev, dupes.get(hashText(ev))), m: media.length ? 1 : 0, l: links.length ? 1 : 0 },
       ...extra,
     };
@@ -157,12 +174,25 @@ export function makeFeed({ cfg, store, ingest, signer }) {
     });
   }
 
-  /** Up to two circle replies, newest first, for the inline peek. */
-  function peek(id) {
-    const rs = store.getByFilters({ kinds: [1], '#e': [id], limit: 200 })
+  /** Replies to `id` (direct or in its thread), muted authors removed. */
+  function repliesTo(id, limit) {
+    return store.getByFilters({ kinds: [1], '#e': [id], limit })
       .filter((r) => { const x = replyRefs(r); return (x.reply === id || x.root === id) && !g.mutes.has(r.pubkey); });
-    const circ = rs.filter((r) => g.follows.has(r.pubkey) || r.pubkey === cfg.owner).sort((a, b) => a.created_at - b.created_at);
-    return circ.slice(0, 2).map((r) => ({ id: r.id, pubkey: r.pubkey, created_at: r.created_at, content: r.content.slice(0, 400) }));
+  }
+  function replyOut(r, eng, parent) {
+    const e = eng.get(r.id) || { ge: 0, rp: 0, replies: 0, z: 0 };
+    const circle = g.follows.has(r.pubkey) || r.pubkey === cfg.owner;
+    return { id: r.id, pubkey: r.pubkey, created_at: r.created_at, parent, circle, likes: e.ge - 2 * e.rp, reposts: e.rp, replies: e.replies, zaps: e.z, s: spamScore(r) };
+  }
+
+  /** Two best replies for the inline peek: people you know first, then the most popular. */
+  function peekAll(items) {
+    const per = new Map(items.map((it) => [it.id, repliesTo(it.id, 120)]));
+    const eng = engagement([...per.values()].flat().map((r) => r.id));
+    for (const it of items) {
+      const rs = per.get(it.id).map((r) => ({ ...replyOut(r, eng, replyRefs(r).reply), content: r.content.slice(0, 400) })).filter((r) => r.s >= 0.5 && r.parent === it.id);
+      it.peek = orderReplies(rs).slice(0, 2).map(({ s, ...r }) => r);
+    }
   }
 
   function withProfiles(items, extraPks = []) {
@@ -197,7 +227,7 @@ export function makeFeed({ cfg, store, ingest, signer }) {
   const builders = {
     circle() {
       const items = top(circleItems(), 150);
-      for (const it of items.slice(0, 60)) it.peek = peek(it.id);
+      peekAll(items.slice(0, 60));
       return { items };
     },
     news() {
@@ -259,15 +289,12 @@ export function makeFeed({ cfg, store, ingest, signer }) {
     return { section: name, ...out, profiles: withProfiles(all, extra), quoted: quoted(all), graph: { follows: g.follows.size, hop2: g.hop2.size, updated: g.updated }, generated: now() };
   }
 
-  /** Full conversation for the right panel: circle first, then everyone else. */
+  /** Full conversation for the right panel, every reply, best first. */
   function thread(id) {
     const root = store.getEvent(id);
-    const rs = store.getByFilters({ kinds: [1], '#e': [id], limit: 500 }).filter((r) => !g.mutes.has(r.pubkey));
+    const rs = repliesTo(id, 500);
     const eng = engagement([id, ...rs.map((r) => r.id)]);
-    const replies = rs.map((r) => {
-      const x = replyRefs(r);
-      return { id: r.id, pubkey: r.pubkey, created_at: r.created_at, content: r.content.slice(0, 2000), parent: x.reply, circle: g.follows.has(r.pubkey) || r.pubkey === cfg.owner, likes: eng.get(r.id)?.ge || 0, s: spamScore(r), media: mediaOut(extract(r).media.slice(0, 2)) };
-    });
+    const replies = orderReplies(rs.map((r) => ({ ...replyOut(r, eng, replyRefs(r).reply), content: r.content.slice(0, 2000), media: mediaOut(extract(r).media.slice(0, 2)) })));
     const spam = replies.filter((r) => r.s < 0.5).length;
     const items = root ? [item(root, eng, new Map())] : [];
     return { root: items[0] || null, replies: replies.filter((r) => r.s >= 0.5), hiddenSpam: spam, profiles: withProfiles([...items, ...replies]), quoted: quoted(items) };

@@ -2,7 +2,7 @@
 
 **What resonates with you.** Hibiki is a personal Nostr discovery feed. It's a standalone Torii napplet that finds people and posts beyond your circle, tuned to your own taste and humour. Torii nodes cooperate to score spam, and their scores are signed and advisory.
 
-Status: **v0.2.1, first working feed.** Your circle's original posts, news, video, audio and long reads, gathered by your own node and ranked in your browser. Images and links come through your node, so outside hosts never see you reading.
+Status: **v0.2.2, first working feed.** Your circle's original posts, news, video, audio and long reads, gathered by your own node and ranked in your browser. Replies from everyone line up under each post (people you know first, then the most popular), and news links get a free TL;DR picked from the article by your node (no AI, no sats). Images and links come through your node, so outside hosts never see you reading.
 
 ## Documents
 
@@ -21,7 +21,7 @@ Status: **v0.2.1, first working feed.** Your circle's original posts, news, vide
 
 ## How it works
 
-- **Web app** (`web/`): a small trusted shell (`index.html`, `shell.js`) signs you in with your NIP-07 signer and asks you to confirm anything before it is signed. The feed itself (`napplet.html`, `napplet.js`, `rank.js`) runs in a sandboxed iframe with no network access; it only talks to the shell.
+- **Web app** (`web/`): a small trusted shell (`index.html`, `shell.js`) signs you in with your NIP-07 signer and asks you to confirm anything before it is signed (you can turn this off for likes only). The feed itself (`napplet.html`, `napplet.js`, `rank.js`) runs in a sandboxed iframe with no network access; it only talks to the shell.
 - **Feed service** (`service/`, `hibiki-feed`): a single Node process on loopback. It reads who you follow and where they post (NIP-65), starting with your node's shared relay, keeps 14 days of their public posts and reactions in SQLite, computes public features (circle, friend-of-friend, reactions, zaps, spam), and proxies images, video and link previews. It relays only events you signed. It holds no keys.
 - **Ranking** happens in your browser with your own weights, which never leave it.
 
@@ -30,7 +30,7 @@ Status: **v0.2.1, first working feed.** Your circle's original posts, news, vide
 Needs Node 22.13+ with npm. On CPUs without x86-64-v2 support (some older or emulated VPS CPUs) the installer also installs `libvips-tools` for image resizing.
 
 ```bash
-cd ~/torii-hibiki 2>/dev/null || { git clone https://github.com/ChiefmonkeyArt/torii-hibiki.git ~/torii-hibiki && cd ~/torii-hibiki; }; git fetch --tags && git checkout v0.2.1 && sudo ./install.sh && curl -s https://chiefmonkey.art/hibiki/api/health
+cd ~/torii-hibiki 2>/dev/null || { git clone https://github.com/ChiefmonkeyArt/torii-hibiki.git ~/torii-hibiki && cd ~/torii-hibiki; }; git fetch --tags && git checkout v0.2.2 && sudo ./install.sh && curl -s https://chiefmonkey.art/hibiki/api/health
 ```
 
 The installer finds your npub from the Torii Suite or Continuum settings (or pass it: `sudo ./install.sh npub1...`). It installs the release to `/apps/hibiki/`, creates the `hibiki` user, `/etc/hibiki/hibiki.env` and `/var/lib/hibiki`, installs the sandboxed `hibiki-feed` service, writes `/opt/torii/nginx-fragments/hibiki.conf`, validates nginx, health-checks the service (rolling everything back on failure) and registers the **Hibiki** launcher card.
