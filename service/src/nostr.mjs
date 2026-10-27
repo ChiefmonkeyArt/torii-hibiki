@@ -65,14 +65,14 @@ export function extract(ev) {
     if (mime.startsWith('image/') || IMG.test(raw)) type = 'image';
     else if (mime.startsWith('video/') || VID.test(raw)) type = 'video';
     else if (mime.startsWith('audio/') || AUD.test(raw)) type = 'audio';
-    if (type) media.push({ type, url: raw, alt: (im.alt || '').slice(0, 300), dim: im.dim || null });
+    if (type) media.push({ type, url: raw, alt: (im.alt || '').slice(0, 300), dim: im.dim || null, thumb: type === 'video' && /^https:\/\//.test(im.image || '') ? im.image : null });
     else { const c = cleanUrl(raw); if (c) links.push(c); }
   }
   // kinds 20/21/22 carry media only in imeta tags
   if (!media.length) for (const [url, im] of meta) {
     const mime = im.m || '';
     const type = mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'image';
-    if (url.startsWith('https://')) media.push({ type, url, alt: (im.alt || '').slice(0, 300), dim: im.dim || null, thumb: im.image || null });
+    if (url.startsWith('https://')) media.push({ type, url, alt: (im.alt || '').slice(0, 300), dim: im.dim || null, thumb: /^https:\/\//.test(im.image || '') ? im.image : null });
   }
   return { media: media.slice(0, 8), links: links.slice(0, 4) };
 }

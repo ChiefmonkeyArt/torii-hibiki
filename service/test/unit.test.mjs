@@ -34,6 +34,10 @@ test('media and link extraction, tracker stripping, https only', () => {
   assert.equal(cleanUrl('http://x.example/'), null);
   const k20 = extract(ev({ kind: 20, content: 'pic', tags: [['imeta', 'url https://cdn.example/abc', 'm image/webp']] }));
   assert.equal(k20.media[0].type, 'image');
+  const vp = extract(ev({ content: 'clip https://v.example/a.mp4', tags: [['imeta', 'url https://v.example/a.mp4', 'm video/mp4', 'image https://v.example/a.jpg']] }));
+  assert.equal(vp.media[0].thumb, 'https://v.example/a.jpg', 'video poster from imeta image');
+  const bad = extract(ev({ content: 'clip https://v.example/b.mp4', tags: [['imeta', 'url https://v.example/b.mp4', 'image http://v.example/b.jpg']] }));
+  assert.equal(bad.media[0].thumb, null, 'non-https posters are dropped');
 });
 
 test('profile parsing keeps only known string fields', () => {

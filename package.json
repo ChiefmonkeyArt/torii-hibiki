@@ -1,6 +1,6 @@
 {
   "name": "torii-hibiki",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Hibiki \u2014 personal Nostr discovery feed, a standalone Torii napplet.",
   "license": "GPL-3.0-or-later",
   "private": true,

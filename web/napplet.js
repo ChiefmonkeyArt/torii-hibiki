@@ -108,9 +108,32 @@
     var v = h('video', { src: m.src, controls: true, autoplay: true, playsinline: true, preload: 'metadata' });
     box.replaceWith(v);
   }
+  // Preview frame for videos without a poster: when the card scrolls into view,
+  // load just the video's metadata through the node and show a frame from 0.5 s.
+  // At most three load at once so the node is not flooded.
+  var frameQ = [], frameBusy = 0;
+  function frameNext() {
+    while (frameBusy < 3 && frameQ.length) {
+      var j = frameQ.shift(); frameBusy++;
+      (function (j) {
+        var v = h('video', { src: j.src + '#t=0.5', preload: 'metadata', playsinline: true, 'aria-hidden': 'true', tabindex: '-1', class: 'vprev' });
+        v.muted = true;
+        var done = function (ok) { if (v._d) return; v._d = 1; frameBusy--; if (ok) v.classList.add('ok'); else v.remove(); frameNext(); };
+        v.addEventListener('loadeddata', function () { done(true); });
+        v.addEventListener('error', function () { done(false); });
+        setTimeout(function () { done(v.readyState >= 2); }, 15000);
+        j.el.insertBefore(v, j.el.firstChild);
+      })(j);
+    }
+  }
+  function framePoster(el, src) {
+    el._load = function () { frameQ.push({ el: el, src: src }); frameNext(); };
+    if (io) io.observe(el); else el._load();
+  }
   function videoBox(m) {
     var box = btn([m.thumb ? h('img', { src: m.thumb, alt: m.alt || '', loading: 'lazy' }) : null, h('span', { class: 'play', 'aria-hidden': 'true' }, '\u25B6'), h('span', { class: 'sr' }, 'Play video')], { class: 'vid' });
     box.addEventListener('click', function (e) { e.stopPropagation(); playVideo(m, box); });
+    if (!m.thumb && m.src) framePoster(box, m.src);
     return box;
   }
   function audioBox(m, title) {
@@ -186,16 +209,19 @@
       h('div', { class: 'nh' }, avatar(it.pubkey), h('div', { class: 'nm' }, h('b', {}, p.name), h('span', { class: 'm' }, (p.nip05 ? p.nip05.replace(/^_@/, '') + ' \u00B7 ' : '') + ago(it.created_at))),
         btn(h('i'), { class: 'glint', 'aria-label': 'Why am I seeing this?', title: 'Why this?' }, function (e) { e.stopPropagation(); why(it, e.currentTarget); })),
       content,
-      h('div', { class: 'acts' },
-        act('Reply' + (it.replies ? ' ' + fmt(it.replies) : ''), {}, function () { select(it, 'replies'); }),
-        act(mine(it, 'r') ? 'Reposted' : 'Repost', { 'aria-pressed': mine(it, 'r') ? 'true' : 'false' }, function () { if (!mine(it, 'r')) repost(it); }),
-        act('\u2665 ' + fmt((it.f.ge || 0) + (S.liked[it.id] && !(it.me && it.me.l) ? 1 : 0)), { 'aria-pressed': mine(it, 'l') ? 'true' : 'false', 'aria-label': mine(it, 'l') ? 'Liked' : 'Like' }, function () { if (!mine(it, 'l')) like(it); }),
-        it.f.z ? h('span', { class: 'm', style: 'padding:5px 8px' }, '\u26A1 ' + fmt(it.f.z)) : null,
-        viaLine(it)),
+      actsRow(it, function () { select(it, 'replies'); }, viaLine(it)),
       opts.peek !== false && it.peek && it.peek.length ? h('div', { class: 'peek' }, it.peek.map(replyRow), btn(it.replies > it.peek.length ? 'View all ' + fmt(it.replies) + ' replies' : 'Open conversation', { class: 'more', style: 'text-align:left' }, function (e) { e.stopPropagation(); select(it, 'replies'); })) : null);
     art.addEventListener('click', function () { select(it); });
     art.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target === art) select(it); });
     return art;
+  }
+  function actsRow(it, onReply, extra) {
+    return h('div', { class: 'acts' },
+      act('Reply' + (it.replies ? ' ' + fmt(it.replies) : ''), { 'aria-label': 'Reply' }, onReply),
+      act(mine(it, 'r') ? 'Reposted' : 'Repost', { 'aria-pressed': mine(it, 'r') ? 'true' : 'false' }, function () { if (!mine(it, 'r')) repost(it); }),
+      act('\u2665 ' + fmt((it.f.ge || 0) + (S.liked[it.id] && !(it.me && it.me.l) ? 1 : 0)), { 'aria-pressed': mine(it, 'l') ? 'true' : 'false', 'aria-label': mine(it, 'l') ? 'Liked' : 'Like' }, function () { if (!mine(it, 'l')) like(it); }),
+      it.f.z ? h('span', { class: 'm zt', title: 'Zapped' }, '\u26A1 ' + fmt(it.f.z)) : null,
+      extra || null);
   }
   function replyRow(r) {
     var pop = (r.likes || 0) + (r.reposts || 0);
@@ -247,7 +273,10 @@
       if (el.classList.contains('sel')) fresh.classList.add('sel');
       el.replaceWith(fresh);
     });
+    var pa = panelEl && S.sel === it && panelEl.querySelector('.pacts');
+    if (pa) pa.replaceWith(panelActs(it));
   }
+  function panelActs(it) { var r = actsRow(it, function () { var t = panelEl.querySelector('.cmp textarea'); if (t) t.focus(); }); r.classList.add('pacts'); return r; }
   function mine(it, k) { return !!((k === 'l' ? S.liked : S.reposted)[it.id] || (it.me && it.me[k])); }
   function quiet(e) { if (e && e.message !== 'cancelled') toast('Not sent: ' + e.message); }
 
@@ -281,6 +310,7 @@
     if (it.story) return storyPanel(pb, it);
     var imgs = it.media.filter(function (m) { return m.type === 'image'; });
     if (plain(it.content)) pb.appendChild(h('div', { class: 'txt ptxt' }, richText(it.content, true)));
+    if (panelEl._acts) pb.appendChild(panelActs(it));
     if (imgs.length) mediaPanel(pb, it, imgs);
     else if (it.links.length) pb.appendChild(linkSummary(it.links[0]));
     repliesPanel(pb, it);
@@ -363,9 +393,9 @@
   // ---------- modal (used outside Circle, and for the reader/player) ----------
   var modalEl = null, inModal = false, pagePanel = null;
   function closeModal() { if (modalEl) { modalEl.remove(); modalEl = null; } if (inModal) { inModal = false; panelEl = pagePanel; } }
-  function modal(content, bare) {
+  function modal(content, bare, cls) {
     closeModal();
-    modalEl = h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true' }, h('div', { class: 'glass' }, bare ? null : h('div', { class: 'row', style: 'margin-bottom:8px' }, h('span'), btn('\u2715', { class: 'btn sm', 'aria-label': 'Close' }, closeModal)), content));
+    modalEl = h('div', { class: 'modal' + (cls ? ' ' + cls + 'w' : ''), role: 'dialog', 'aria-modal': 'true' }, h('div', { class: 'glass' + (cls ? ' ' + cls : '') }, bare ? null : h('div', { class: 'row', style: 'margin-bottom:8px' }, h('span'), btn('\u2715', { class: 'btn sm', 'aria-label': 'Close' }, closeModal)), content));
     modalEl.addEventListener('click', function (e) { if (e.target === modalEl) closeModal(); });
     document.body.appendChild(modalEl);
   }
@@ -536,9 +566,19 @@
   function videoCard(it) {
     var v = it.media.find(function (m) { return m.type === 'video'; });
     var pic = poster(it), ap = prof(it.pubkey).pic;
-    return btn([h('span', { class: 'cover' }, pic ? h('img', { src: pic, alt: '', loading: 'lazy' }) : ap ? h('img', { class: 'blur', src: ap, alt: '', loading: 'lazy' }) : null, h('span', { class: 'play', style: 'position:absolute;inset:0;margin:auto;width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,.25);display:flex;align-items:center;justify-content:center;color:#fff' }, '\u25B6')),
-      h('span', { class: 'nh' }, avatar(it.pubkey, 'xs'), h('b', { style: 'font-size:13px' }, prof(it.pubkey).name), h('span', { class: 'm' }, ago(it.created_at))), h('span', { class: 'sum' }, (it.title || it.content || '').replace(/https:\/\/\S+/g, '').trim().slice(0, 140))],
-      { class: 'glass card' }, function () { if (v) modal(h('div', {}, h('video', { src: v.src, controls: true, autoplay: true, playsinline: true }), noteCard(it, { peek: false }))); });
+    var cover = h('span', { class: 'cover' }, pic ? h('img', { src: pic, alt: '', loading: 'lazy' }) : ap ? h('img', { class: 'blur', src: ap, alt: '', loading: 'lazy' }) : null, h('span', { class: 'play' }, '\u25B6'));
+    if (!pic && v && v.src) framePoster(cover, v.src);
+    return btn([cover, h('span', { class: 'nh' }, avatar(it.pubkey, 'xs'), h('b', { style: 'font-size:13px' }, prof(it.pubkey).name), h('span', { class: 'm' }, ago(it.created_at))), h('span', { class: 'sum' }, (it.title || it.content || '').replace(/https:\/\/\S+/g, '').trim().slice(0, 140))],
+      { class: 'glass card' }, function () { if (v) watchModal(it, v); });
+  }
+  // Big player: the video fills the stage, and the author, post, actions and
+  // replies sit beside it (below it on phones), all inside the viewport.
+  function watchModal(it, v) {
+    var vid = h('video', { src: v.src, controls: true, autoplay: true, playsinline: true, preload: 'metadata' });
+    var p = h('aside', { class: 'glass panel open' });
+    p._acts = true;
+    modal(h('div', { class: 'vmod' }, h('div', { class: 'stage' }, vid), p), true, 'vm');
+    pagePanel = panelEl; panelEl = p; inModal = true; S.sel = it; S.focus = null; renderPanel();
   }
   function liveCard(l) {
     return h('div', { class: 'glass card' }, h('span', { class: 'cover' }, l.image ? h('img', { src: l.image, alt: '' }) : null, h('span', { class: 'kb live', style: 'position:absolute;top:10px;left:10px' }, 'LIVE' + (l.viewers ? ' \u00B7 ' + fmt(l.viewers) : ''))), h('span', { class: 'nh' }, avatar(l.pubkey, 'xs'), h('b', { style: 'font-size:13px' }, prof(l.pubkey).name)), h('span', { class: 'sum' }, l.title));

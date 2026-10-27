@@ -121,6 +121,15 @@ t('replies and likes: no reply gating, in-place like, opt-out only for likes', (
   assert.match(shell, /draft\.kind === 7 && store\.get\('skip7'/, 'only likes may skip the confirm dialog');
   assert.match(read('web/index.html'), /id="c-skipbox"/);
 });
+t('watch: preview frames are lazy and capped, the player keeps everything on screen', () => {
+  const nap = read('web/napplet.js'), css = read('web/napplet.css');
+  assert.match(nap, /frameBusy < 3/, 'at most three preview frames load at once');
+  assert.match(nap, /preload: 'metadata'.*'aria-hidden': 'true'/, 'preview frames load metadata only');
+  const wm = nap.slice(nap.indexOf('function watchModal'), nap.indexOf('function liveCard'));
+  assert.ok(wm && !/noteCard|videoBox/.test(wm), 'no second copy of the post or a placeholder under the playing video');
+  assert.match(css, /\.modal>\.glass\.vm\{[^}]*height:calc\(100vh - 48px\)[^}]*overflow:hidden/, 'player fits the viewport on desktop');
+  assert.match(css, /\.pb>\*\{flex-shrink:0\}/);
+});
 t('installer: preflight, fragment-first, nginx -t and health-check rollback', () => {
   assert.ok(sh.startsWith('#!/usr/bin/env bash') && /set -euo pipefail/.test(sh));
   const frag = sh.indexOf('cat > "${FRAGMENT_FILE}.new"'), test = sh.indexOf('if ! nginx -t'), flip = sh.lastIndexOf('mv -Tf "${CURRENT_LINK}.new" "$CURRENT_LINK"\nsystemctl'), reg = sh.indexOf('register "$APP"');
