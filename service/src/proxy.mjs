@@ -1,31 +1,29 @@
 // proxy.mjs — the three privacy proxies. Readers' browsers only ever talk to
 // this node; upstream hosts see the node, never the reader.
-import sharp from 'sharp';
 import { fetchBuffer, open, FetchError } from './safefetch.mjs';
-
-sharp.cache(false);
-sharp.concurrency(1);
+import { sniff } from './imaging.mjs';
 
 const RASTER = /^image\/(jpeg|png|gif|webp|avif)/;
 const MEDIA = /^(video\/(mp4|webm|quicktime|x-m4v)|audio\/(mpeg|mp4|ogg|opus|wav|x-wav|flac|aac|webm|x-m4a))/;
 const IMMUTABLE = 'public, max-age=604800, immutable';
 
-export function makeProxies({ signer, cache, log = () => {} }) {
+export function makeProxies({ signer, cache, imager, log = () => {} }) {
+  // imager: a promise of { name, render(body, width) } from imaging.mjs
+  const im = Promise.resolve(imager);
   const inflight = new Map();
 
   async function render(url, w) {
     const { body, type } = await fetchBuffer(url, { cap: 8 * 1024 * 1024, accept: 'image/avif,image/webp,image/*' });
-    if (!RASTER.test(type) && !looksRaster(body)) throw new FetchError('not a raster image', 415);
-    // Re-encode: strips EXIF/GPS and any embedded payload, bounds dimensions.
-    return sharp(body, { limitInputPixels: 40e6, animated: false, failOn: 'error' })
-      .rotate().resize({ width: w, height: w * 2, fit: 'inside', withoutEnlargement: true })
-      .webp({ quality: 74, effort: 3 }).toBuffer();
+    if (!RASTER.test(type) && !sniff(body)) throw new FetchError('not a raster image', 415);
+    // Re-encode (or strip, on the copy backend): removes EXIF/GPS and other metadata.
+    const { body: out } = await (await im).render(body, w);
+    return out;
   }
 
   async function img(req, res, sig, w, u) {
     const url = signer.verifyImg(sig, w, u);
     if (!url) return send(res, 403, 'bad signature');
-    const key = `img|${w}|${u}`;
+    const key = `img|${(await im).name}|${w}|${u}`;
     let out = await cache.get(key);
     if (!out) {
       let p = inflight.get(key);
@@ -33,7 +31,9 @@ export function makeProxies({ signer, cache, log = () => {} }) {
       try { out = await p; } catch (e) { log('img', e.message); return send(res, e.status || 502, 'image unavailable'); }
       cache.put(key, out).catch(() => {});
     }
-    res.writeHead(200, { 'content-type': 'image/webp', 'content-length': out.length, 'cache-control': IMMUTABLE, 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'" });
+    const type = sniff(out);
+    if (!type) return send(res, 502, 'image unavailable');
+    res.writeHead(200, { 'content-type': type, 'content-length': out.length, 'cache-control': IMMUTABLE, 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'" });
     res.end(out);
   }
 
@@ -67,11 +67,6 @@ export function makeProxies({ signer, cache, log = () => {} }) {
   }
 
   return { img, media, link };
-}
-
-function looksRaster(b) {
-  const h = b.subarray(0, 12).toString('hex');
-  return h.startsWith('ffd8ff') || h.startsWith('89504e47') || h.startsWith('47494638') || (h.startsWith('52494646') && b.subarray(8, 12).toString() === 'WEBP') || b.subarray(4, 12).toString().startsWith('ftypavi');
 }
 
 const ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", '#39': "'", nbsp: ' ' };

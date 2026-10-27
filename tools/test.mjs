@@ -122,6 +122,11 @@ t('installer: preflight, fragment-first, nginx -t and health-check rollback', ()
   assert.match(sh, /NPM" ci --omit=dev --ignore-scripts/);
   assert.match(sh, /KEEP_RELEASES=5/);
 });
+t('installer: image backend falls back from sharp to libvips on CPUs without x86-64-v2', () => {
+  const probe = sh.indexOf("import('sharp')"), apt = sh.indexOf('apt-get install -y -qq --no-install-recommends libvips-tools'), flip = sh.indexOf('if ! nginx -t');
+  assert.ok(probe > 0 && apt > probe && flip > apt, 'probe sharp, then install libvips-tools, before going live');
+  assert.match(sh, /IMG="copy"/);
+});
 t('installer: service is unprivileged, loopback-only, memory-capped, keeps its secret', () => {
   for (const d of ['User=${SVC_USER}', 'NoNewPrivileges=yes', 'ProtectSystem=strict', 'ProtectHome=yes', 'PrivateTmp=yes', 'MemoryMax=', 'CapabilityBoundingSet=', 'ReadWritePaths=${DATA_DIR}', 'RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX'])
     assert.ok(sh.includes(d), d);

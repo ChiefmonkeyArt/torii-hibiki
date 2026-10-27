@@ -11,6 +11,7 @@ import { loadConfig } from './config.mjs';
 import { makeSigner } from './signer.mjs';
 import { makeCache } from './imgcache.mjs';
 import { makeProxies } from './proxy.mjs';
+import { loadImager } from './imaging.mjs';
 import { makeIngest } from './ingest.mjs';
 import { makeFeed } from './feed.mjs';
 import { verifyNip98, checkPublish } from './auth.mjs';
@@ -25,7 +26,10 @@ export function createApp(cfg, deps = {}) {
   const store = deps.store || new EventStore({ database: db });
   const signer = makeSigner(cfg.secret, cfg.basePath);
   const cache = makeCache(path.join(cfg.dataDir, 'cache'), cfg.imgCacheBytes);
-  const proxies = makeProxies({ signer, cache, log });
+  const imager = deps.imager ? Promise.resolve(deps.imager) : loadImager(cfg.imgBackend, log);
+  let imgBackend = 'loading';
+  imager.then((i) => { imgBackend = i.name; log('imaging', `image backend: ${i.name}`); }, (e) => log('imaging', e.message));
+  const proxies = makeProxies({ signer, cache, imager, log });
   const ingest = deps.ingest || makeIngest({ cfg, store, log });
   const feed = makeFeed({ cfg, store, ingest, signer });
   const seen = new Map();
@@ -49,7 +53,7 @@ export function createApp(cfg, deps = {}) {
     const post = req.method === 'POST';
     // CSRF: POSTs need a custom header, which a cross-site form cannot send.
     if (post && req.headers['x-hibiki'] !== '1') return json(res, 403, { error: 'missing x-hibiki header' });
-    if (route === 'health') return json(res, 200, { ok: true, version: VERSION, sync: ingest.state.lastSync, follows: ingest.graph.follows.size, error: ingest.state.lastError });
+    if (route === 'health') return json(res, 200, { ok: true, version: VERSION, sync: ingest.state.lastSync, follows: ingest.graph.follows.size, img: imgBackend, error: ingest.state.lastError });
     if (route === 'login' && post) {
       const ip = String(req.headers['x-real-ip'] || req.socket.remoteAddress);
       const t = loginTries.get(ip) || [];

@@ -119,6 +119,7 @@ Hibiki uses [Applesauce](https://github.com/hzrd149/applesauce) v7 (MIT, GPL-com
 - **Ranking split:** the node computes public features per post (in circle, friend-of-friend, circle and wider reactions, zaps, age, spam score, media) and returns them with a default order. The browser re-ranks with the owner's weights, which are stored only in the browser. The same `rank.js` runs in both places. Private signals beyond the sliders are P2.
 - **Writes:** replies, reactions and reposts are proposals from the napplet. The shell shows exactly what will be signed, asks the signer, then posts the signed event to the node, which checks it is owner-signed and an allowed kind (1, 6, 7, 10000, 30004, 30078) before relaying it to the shared node relay and the owner's write relays. The node holds no keys.
 - **Shared relay first:** the node reads from and writes to the Suite relay on loopback (`ws://127.0.0.1:7777`, the same relay Continuum, the Torii Suite and Plebeian use), then the follows' NIP-65 outbox relays chosen greedily under a cap (24), and public index relays only to discover relay lists.
+- **Image re-encoding** (v0.2.1): sharp where the CPU runs its prebuilt binaries (x86-64-v2 or arm64), else the distro libvips CLI, else the original bytes with metadata stripped and no resizing. Every path strips EXIF/GPS and serves only sniffed raster types (never SVG).
 - **Footprint:** one Node 22.13+ process on loopback, systemd-sandboxed as its own user, memory-capped, 14-day retention, bounded image cache (512 MB default).
 
 ## Consequences

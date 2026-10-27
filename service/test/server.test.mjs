@@ -41,7 +41,9 @@ test('feed service end to end', async (t) => {
   for (const e of [root, reply, like]) store.add(e);
 
   let r = await fetch(`${base}/api/health`);
-  assert.equal((await r.json()).version, VERSION);
+  const health = await r.json();
+  assert.equal(health.version, VERSION);
+  assert.ok(['loading', 'sharp', 'vips', 'copy'].includes(health.img), 'health reports the image backend');
 
   r = await fetch(`${base}/api/feed?section=circle`);
   assert.equal(r.status, 401, 'feed needs the owner session');

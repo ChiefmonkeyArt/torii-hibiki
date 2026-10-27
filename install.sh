@@ -95,6 +95,21 @@ install -m 0644 "$SRC"/service/src/*.mjs "$RELEASE_DIR/service/src/"
 log "installing service dependencies (pinned, no package scripts)"
 ( cd "$RELEASE_DIR/service" && "$NPM" ci --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error ) \
   || { rm -rf "$RELEASE_DIR"; die "npm ci failed"; }
+# Image re-encoding: sharp's prebuilt binaries need an x86-64-v2 (or arm64) CPU.
+# On older or emulated CPUs, use the distro's libvips CLI instead (built for any
+# x86-64); without either, the service serves originals with metadata stripped.
+if ( cd "$RELEASE_DIR/service" && "$NODE" -e "import('sharp').then(m=>m.default({create:{width:2,height:2,channels:3,background:'#000'}}).webp().toBuffer()).catch(()=>process.exit(1))" ) >/dev/null 2>&1; then
+  IMG="sharp"
+elif [[ -x /usr/bin/vips ]]; then
+  IMG="vips"
+elif command -v apt-get >/dev/null 2>&1; then
+  log "this CPU cannot run sharp's prebuilt binaries; installing libvips-tools for image resizing"
+  if DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends libvips-tools >/dev/null 2>&1 && [[ -x /usr/bin/vips ]]; then IMG="vips"
+  else IMG="copy"; log "warning: libvips-tools did not install; images will be served unresized with metadata stripped"; fi
+else
+  IMG="copy"; log "warning: no sharp or libvips; images will be served unresized with metadata stripped"
+fi
+log "image backend: ${IMG}"
 chown -R root:root "$RELEASE_DIR"; chmod -R a+rX,go-w "$RELEASE_DIR"
 log "release ${RELEASE_DIR} (v${VERSION})"
 
@@ -258,4 +273,4 @@ find "$RELEASES" -mindepth 1 -maxdepth 1 -type d -name '[0-9]*-[0-9]*' -printf '
       [[ "$RELEASES/$d" == "$CUR" ]] || rm -rf -- "${RELEASES:?}/$d"
     done
 
-log "done: ${DISPLAY_NAME} v${VERSION} live at ${ORIGIN}/${APP}/ (owner ${OWNER:0:12}…)"
+log "done: ${DISPLAY_NAME} v${VERSION} live at ${ORIGIN}/${APP}/ (owner ${OWNER:0:12}…, images via ${IMG})"

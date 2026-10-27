@@ -4,7 +4,7 @@
 
 ### Active tasks
 
-- **HIBIKI-P1-INSTALL (v0.2.0):** the owner runs the install command on the VPS, signs in at `/hibiki/` with their NIP-07 signer and checks: the feed fills from the circle, images load with no third-party requests, a reply/reaction asks for confirmation then appears on the shared relay, and `systemctl status hibiki-feed` shows it under its memory cap.
+- **HIBIKI-P1-INSTALL (v0.2.1):** the owner runs the install command on the VPS, signs in at `/hibiki/` with their NIP-07 signer and checks: the feed fills from the circle, images load with no third-party requests, a reply/reaction asks for confirmation then appears on the shared relay, and `systemctl status hibiki-feed` shows it under its memory cap.
 - **HIBIKI-P1-ACCEPT:** phone acceptance (warm load under 2 s, panel sheet, tap-to-play) and a week of real use to tune the default weights and spam features.
 - **HIBIKI-P4-RELAY-ADR (later):** a Torii Suite ADR for the additive relay write rule (accept 30382/30383 from bound service keys) before P4.
 
@@ -23,4 +23,4 @@
 
 ### Done
 
-- HIBIKI-P0 (v0.1.0) preview card. HIBIKI-ADR-ACCEPT: ADR-0001 revision 4 and the event model accepted 2026-10-27. HIBIKI-P1 build (v0.2.0).
+- HIBIKI-P0 (v0.1.0) preview card. HIBIKI-ADR-ACCEPT: ADR-0001 revision 4 and the event model accepted 2026-10-27. HIBIKI-P1 build (v0.2.0). v0.2.1: image fallback for CPUs without x86-64-v2 (the v0.2.0 install on chiefmonkey.art rolled back cleanly because sharp could not load).
