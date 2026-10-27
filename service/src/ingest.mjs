@@ -41,6 +41,23 @@ export function chooseRelays(outbox, authors, max, fallback) {
   return plan;
 }
 
+/** Publishes to every relay; resolves as soon as one accepts (or all have
+ *  answered, or `ms` passes). Relays still working are marked pending and
+ *  finish in the background. */
+export async function firstAccepted(relays, send, ms) {
+  const results = new Map();
+  const each = relays.map((url) => Promise.resolve().then(() => send(url))
+    .then((r) => ({ relay: url, ok: !!r?.ok, message: r?.message || '' }), (e) => ({ relay: url, ok: false, message: e?.message || 'failed' }))
+    .then((r) => { results.set(url, r); return r; }));
+  let timer;
+  await Promise.race([
+    new Promise((res) => { each.forEach((p) => p.then((r) => { if (r.ok) res(); })); Promise.all(each).then(res); }),
+    new Promise((res) => { timer = setTimeout(res, ms); }),
+  ]);
+  clearTimeout(timer);
+  return relays.map((url) => results.get(url) || { relay: url, ok: false, pending: true, message: '' });
+}
+
 const chunk = (a, n) => { const o = []; for (let i = 0; i < a.length; i += n) o.push(a.slice(i, i + n)); return o; };
 
 export function makeIngest({ cfg, store, log = () => {} }) {
@@ -147,16 +164,34 @@ export function makeIngest({ cfg, store, log = () => {} }) {
     return store.getEvent(id);
   }
 
-  async function publish(ev) {
-    const relays = [...new Set([primary, ...graph.ownerRelays])].slice(0, 8);
-    const out = await pool.publish(relays, ev, { timeout: 8000 }).catch((e) => [{ ok: false, from: 'pool', message: e.message }]);
+  /** On-demand: a person's profile, relay list and recent posts, for their profile page. */
+  async function fetchAuthor(pk) {
+    const relays = [primary, ...(graph.outbox.get(pk) || writeRelays(store.getReplaceable(10002, pk))).slice(0, 4), ...cfg.indexRelays];
+    keep(await req(relays.slice(0, 8), [{ kinds: [0, 10002], authors: [pk] }, { kinds: [1, 6, 20, 21, 22, 30023], authors: [pk], limit: 60 }], 5000));
+  }
+  async function fetchProfile(pk) {
+    if (!store.getReplaceable(0, pk)) keep(await req([primary, ...cfg.indexRelays], [{ kinds: [0], authors: [pk] }], 4000));
+    return store.getReplaceable(0, pk);
+  }
+  /** Reads `filters` from `relays`, keeps what arrives and returns it. */
+  async function query(relays, filters, ms = 5000) { const evs = await req(relays, filters, ms); keep(evs); return evs; }
+
+  // Owner-signed events go to the node relay and the owner's write relays.
+  // The event is stored first, so it shows in Hibiki at once; the answer
+  // comes back as soon as one relay accepts it (or after 3 s), and the
+  // slower relays finish in the background.
+  async function publish(ev, firstWithin = 3000) {
     store.add(ev);
-    return out.map((r) => ({ relay: r.from, ok: !!r.ok, message: r.message || '' }));
+    const relays = [...new Set([primary, ...graph.ownerRelays])].slice(0, 8);
+    const out = await firstAccepted(relays, (url) => pool.relay(url).publish(ev, { timeout: 8000 }), firstWithin);
+    const failed = out.filter((r) => !r.ok && !r.pending);
+    if (failed.length) log('publish', failed.map((r) => `${r.relay}: ${r.message}`).join('; '));
+    return out;
   }
 
   let timer = null;
   return {
-    graph, state, tick, fetchThread, fetchEvent, publish,
+    graph, state, tick, fetchThread, fetchEvent, fetchAuthor, fetchProfile, query, publish,
     start() { tick(); timer = setInterval(tick, cfg.syncMinutes * 60000); timer.unref?.(); },
     stop() { clearInterval(timer); },
   };

@@ -8,12 +8,14 @@ import { EventStore } from 'applesauce-core';
 import { NativeSqliteEventDatabase } from 'applesauce-sqlite/native';
 import { createApp, VERSION } from '../src/server.mjs';
 import { loadConfig } from '../src/config.mjs';
+import { createHash } from 'node:crypto';
+import { fakeInvoice } from './helpers.mjs';
 
 const ownerSk = generateSecretKey(), owner = getPublicKey(ownerSk);
 const friendSk = generateSecretKey(), friend = getPublicKey(friendSk);
 const now = () => Math.floor(Date.now() / 1000);
 
-async function boot() {
+async function boot(deps = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hibiki-'));
   const cfg = loadConfig({ HIBIKI_OWNER: owner, HIBIKI_SECRET: 'cd'.repeat(32), HIBIKI_DATA: dir, HIBIKI_ORIGIN: 'https://node.example' });
   const db = new NativeSqliteEventDatabase(':memory:');
@@ -24,11 +26,20 @@ async function boot() {
     state: { lastSync: now(), relaysUsed: 3, lastError: null },
     tick() {}, stop() {}, async fetchThread() {}, async fetchEvent(id) { return store.getEvent(id); },
     async publish(ev) { published.push(ev); return [{ relay: 'ws://127.0.0.1:7777', ok: true, message: '' }]; },
+    async fetchAuthor(pk) { ingest.authorAsked = pk; }, async fetchProfile(pk) { return store.getReplaceable(0, pk); },
+    async query() { return ingest.queryResult || []; },
   };
-  const app = createApp(cfg, { db, store, ingest, log: () => {} });
+  const app = createApp(cfg, { db, store, ingest, log: () => {}, ...deps });
   await new Promise((r) => app.server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${app.server.address().port}/hibiki`;
-  return { app, store, base, published, dir };
+  return { app, store, base, published, dir, ingest };
+}
+
+async function login(base) {
+  const url = 'https://node.example/hibiki/api/login';
+  const ev = finalizeEvent({ kind: 27235, created_at: now(), tags: [['u', url], ['method', 'POST']], content: '' }, ownerSk);
+  const r = await fetch(`${base}/api/login`, { method: 'POST', headers: { authorization: 'Nostr ' + Buffer.from(JSON.stringify(ev)).toString('base64'), 'x-hibiki': '1' } });
+  return r.headers.get('set-cookie').split(';')[0];
 }
 
 test('feed service end to end', async (t) => {
@@ -116,4 +127,65 @@ test('feed service end to end', async (t) => {
 
   r = await fetch(`${base}/api/logout`, { method: 'POST', headers: { cookie, 'x-hibiki': '1' } });
   assert.match(r.headers.get('set-cookie'), /Max-Age=0/);
+});
+
+test('profiles, duplicate replies and zaps over HTTP', async (t) => {
+  const walletSk = generateSecretKey(), walletPk = getPublicKey(walletSk);
+  const asked = [];
+  let invoiceFor = null;
+  const zapGet = async (u) => {
+    asked.push(u);
+    if (u === 'https://pay.example/.well-known/lnurlp/tamsin') return { tag: 'payRequest', callback: 'https://pay.example/cb', minSendable: 1000, maxSendable: 1e8, allowsNostr: true, nostrPubkey: walletPk, commentAllowed: 100 };
+    const req = JSON.parse(new URL(u).searchParams.get('nostr'));
+    return { pr: fakeInvoice('lnbc210n', invoiceFor || createHash('sha256').update(JSON.stringify(req)).digest('hex')) };
+  };
+  const { app, store, base, dir, ingest } = await boot({ zapGet });
+  t.after(() => { app.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  store.add(finalizeEvent({ kind: 0, created_at: now() - 100, tags: [], content: JSON.stringify({ name: 'Tamsin', about: 'Walks', lud16: 'tamsin@pay.example' }) }, friendSk));
+  const root = finalizeEvent({ kind: 1, created_at: now() - 60, tags: [], content: 'Cheer up' }, friendSk);
+  store.add(root);
+  const spamSk = generateSecretKey();
+  for (let i = 0; i < 3; i++) store.add(finalizeEvent({ kind: 1, created_at: now() - 50 + i, tags: [['e', root.id, '', 'root']], content: 'same words' }, spamSk));
+  const cookie = await login(base);
+  const H = { cookie, 'x-hibiki': '1' };
+
+  let r = await fetch(`${base}/api/author/${friend}?live=1`, { headers: H });
+  const a = await r.json();
+  assert.equal(ingest.authorAsked, friend);
+  assert.equal(a.profile.name, 'Tamsin'); assert.equal(a.profile.zap, true); assert.equal(a.rel.follow, true);
+  assert.ok(a.items.some((x) => x.id === root.id));
+  assert.equal((await fetch(`${base}/api/author/${friend}`)).status, 401, 'profile needs the owner session');
+
+  r = await fetch(`${base}/api/thread/${root.id}`, { headers: H });
+  const th = await r.json();
+  const dupes = th.replies.filter((x) => x.content === 'same words');
+  assert.equal(dupes.length, 1); assert.equal(dupes[0].dup, 3);
+
+  r = await fetch(`${base}/api/zap/info/${friend}`, { headers: H });
+  const info = await r.json();
+  assert.equal(r.status, 200); assert.equal(info.address, 'tamsin@pay.example'); assert.equal(info.max, 100000);
+  assert.ok(info.relays.length && info.relays.every((x) => x.startsWith('wss://')), 'receipt relays are public');
+  r = await fetch(`${base}/api/zap/info/${owner}`, { headers: H });
+  assert.equal(r.status, 422, 'no lightning address');
+
+  const zr = (over = {}) => finalizeEvent({ kind: 9734, created_at: now(), content: 'cheer up', tags: [['relays', ...info.relays], ['amount', '21000'], ['lnurl', info.lnurl], ['p', friend], ['e', root.id], ...(over.tags || [])] }, over.sk || ownerSk);
+  const post = (ev) => fetch(`${base}/api/zap/invoice`, { method: 'POST', headers: { ...H, 'content-type': 'application/json' }, body: JSON.stringify(ev) });
+  const req = zr();
+  r = await post(req);
+  const inv = await r.json();
+  assert.equal(r.status, 200); assert.equal(inv.sats, 21); assert.match(inv.pr, /^lnbc210n1/);
+  assert.ok(Array.isArray(inv.qr) && inv.qr.length >= 21);
+  assert.equal((await post(zr({ sk: friendSk }))).status, 422, 'only the owner can zap');
+  invoiceFor = 'ef'.repeat(32);
+  r = await post(zr());
+  assert.equal(r.status, 422); assert.match((await r.json()).error, /does not match/);
+  assert.equal(asked.filter((u) => u.includes('lnurlp')).length, 1, 'pay info is cached');
+
+  r = await fetch(`${base}/api/zap/receipt/${req.id}`, { headers: H });
+  assert.deepEqual(await r.json(), { paid: false });
+  ingest.queryResult = [finalizeEvent({ kind: 9735, created_at: now(), tags: [['p', friend], ['description', JSON.stringify(req)]], content: '' }, walletSk)];
+  r = await fetch(`${base}/api/zap/receipt/${req.id}`, { headers: H });
+  assert.deepEqual(await r.json(), { paid: true });
+  r = await fetch(`${base}/api/zap/receipt/${'00'.repeat(32)}`, { headers: H });
+  assert.equal((await r.json()).unknown, true);
 });

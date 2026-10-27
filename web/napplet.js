@@ -6,7 +6,7 @@
   'use strict';
   var R = window.HibikiRank;
   var PROXY = /^\/hibiki\/(img|media)\/[\w-]{22}\//;
-  var S = { me: null, weights: null, section: 'today', data: {}, profiles: {}, quoted: {}, sel: null, tab: null, filter: 'all', q: '', shown: 30, liked: {}, reposted: {} };
+  var S = { zapped: {}, prev: null, person: null, me: null, weights: null, section: 'today', data: {}, profiles: {}, quoted: {}, sel: null, tab: null, filter: 'all', q: '', shown: 30, liked: {}, reposted: {} };
 
   // ---------- DOM helpers ----------
   function h(tag, a) {
@@ -36,12 +36,12 @@
 
   // ---------- shell bridge ----------
   var seq = 0, pending = {};
-  function rpc(type, data) {
+  function rpc(type, data, ms) {
     return new Promise(function (res, rej) {
       var id = 'r' + (++seq);
       pending[id] = [res, rej];
       parent.postMessage({ type: type, id: id, data: data || {} }, '*');
-      setTimeout(function () { if (pending[id]) { delete pending[id]; rej(new Error('timeout')); } }, 45000);
+      setTimeout(function () { if (pending[id]) { delete pending[id]; rej(new Error('timeout')); } }, ms || 45000);
     });
   }
   function tell(type, data) { parent.postMessage({ type: type, data: data || {} }, '*'); }
@@ -64,7 +64,20 @@
   }
   function fmt(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n || 0); }
   function prof(pk) { return S.profiles[pk] || { name: (pk || '').slice(0, 8) + '…', pic: null }; }
-  function avatar(pk, cls) { var p = prof(pk); return p.pic ? h('img', { class: 'av ' + (cls || ''), src: p.pic, alt: '', loading: 'lazy', decoding: 'async' }) : h('span', { class: 'av ' + (cls || ''), style: 'background:' + hue(pk) }); }
+  function avatar(pk, cls, big) {
+    var p = prof(pk), srcs = [big, p.pic].filter(function (s) { return s && PROXY.test(s); }), dot = function () { return h('span', { class: 'av ' + (cls || ''), style: 'background:' + hue(pk) }); };
+    if (!srcs.length) return dot();
+    var im = h('img', { class: 'av ' + (cls || ''), src: srcs.shift(), alt: '', loading: 'lazy', decoding: 'async' });
+    im.addEventListener('error', function () { // dead avatar host: try the small picture, then a colour dot, never a gap
+      if (srcs.length) { im.classList.remove('broken'); im.src = srcs.shift(); } else if (im.parentNode) im.replaceWith(dot());
+    });
+    return im;
+  }
+  // A person's name, linking to their profile page.
+  function who(pk, style) { return btn(prof(pk).name, { class: 'who', style: style || null, title: 'Open profile' }, function (e) { e.stopPropagation(); person(pk); }); }
+  var NS = 'http://www.w3.org/2000/svg';
+  var ICONS = { reply: 'M4 5h16v11H9l-5 4z', heart: 'M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7a4.3 4.3 0 0 1 7.5 2.8C19.5 15.4 12 20 12 20z', bolt: 'M13.5 2 4.5 13.5H11L10 22l9.5-12H13z' };
+  function icon(n) { var v = document.createElementNS(NS, 'svg'), pa = document.createElementNS(NS, 'path'); v.setAttribute('viewBox', '0 0 24 24'); v.setAttribute('class', 'ic ic-' + n); v.setAttribute('aria-hidden', 'true'); pa.setAttribute('d', ICONS[n]); v.appendChild(pa); return v; }
   function hue(pk) { var n = parseInt((pk || '0').slice(0, 6), 16) || 0; return 'linear-gradient(135deg,hsl(' + (n % 360) + ' 70% 55%),hsl(' + ((n >> 8) % 360) + ' 70% 45%))'; }
   function stack(pks) { return h('span', { class: 'stk' }, pks.slice(0, 3).map(function (p) { var x = prof(p); return x.pic ? h('img', { src: x.pic, alt: '' }) : h('img', { alt: '', style: 'background:' + hue(p) }); })); }
   function toast(t) { var el = h('div', { class: 'glass toast', role: 'status' }, t); document.body.appendChild(el); setTimeout(function () { el.remove(); }, 2600); }
@@ -206,7 +219,7 @@
     }
     var art = h('article', { class: 'glass n1' + (S.sel && S.sel.id === it.id ? ' sel' : ''), 'data-id': it.id, tabindex: '0' },
       it.repostedBy && it.repostedBy.length ? h('div', { class: 'rpb' }, '\u21BB ' + prof(it.repostedBy[0]).name + (it.repostedBy.length > 1 ? ' and ' + (it.repostedBy.length - 1) + ' more' : '') + ' reposted') : null,
-      h('div', { class: 'nh' }, avatar(it.pubkey), h('div', { class: 'nm' }, h('b', {}, p.name), h('span', { class: 'm' }, (p.nip05 ? p.nip05.replace(/^_@/, '') + ' \u00B7 ' : '') + ago(it.created_at))),
+      h('div', { class: 'nh' }, avatar(it.pubkey), h('div', { class: 'nm' }, who(it.pubkey), h('span', { class: 'm' }, (p.nip05 ? p.nip05.replace(/^_@/, '') + ' \u00B7 ' : '') + ago(it.created_at))),
         btn(h('i'), { class: 'glint', 'aria-label': 'Why am I seeing this?', title: 'Why this?' }, function (e) { e.stopPropagation(); why(it, e.currentTarget); })),
       content,
       actsRow(it, function () { select(it, 'replies'); }, viaLine(it)),
@@ -220,22 +233,32 @@
       act('Reply' + (it.replies ? ' ' + fmt(it.replies) : ''), { 'aria-label': 'Reply' }, onReply),
       act(mine(it, 'r') ? 'Reposted' : 'Repost', { 'aria-pressed': mine(it, 'r') ? 'true' : 'false' }, function () { if (!mine(it, 'r')) repost(it); }),
       act('\u2665 ' + fmt((it.f.ge || 0) + (S.liked[it.id] && !(it.me && it.me.l) ? 1 : 0)), { 'aria-pressed': mine(it, 'l') ? 'true' : 'false', 'aria-label': mine(it, 'l') ? 'Liked' : 'Like' }, function () { if (!mine(it, 'l')) like(it); }),
-      it.f.z ? h('span', { class: 'm zt', title: 'Zapped' }, '\u26A1 ' + fmt(it.f.z)) : null,
+      zapAct(it),
       extra || null);
+  }
+  function zapsOf(it) { return ((it.f && it.f.z) || 0) + (S.zapped[it.id] || 0); }
+  function zapAct(it, short) {
+    var z = zapsOf(it);
+    if (!prof(it.pubkey).zap || it.pubkey === (S.me && S.me.owner)) return z ? h('span', { class: 'm zt', title: 'Zapped' }, icon('bolt'), ' ' + fmt(z)) : null;
+    return act([icon('bolt'), z ? ' ' + fmt(z) : short ? '' : ' Zap'], { class: 'zb', 'aria-label': 'Zap ' + prof(it.pubkey).name, 'aria-pressed': S.zapped[it.id] ? 'true' : 'false', title: 'Zap' }, function () { zapSheet(it); });
   }
   function replyRow(r) {
     var pop = (r.likes || 0) + (r.reposts || 0);
-    return h('div', { class: 'rp' }, avatar(r.pubkey, 'sm'), h('div', {}, h('b', {}, prof(r.pubkey).name), ' ', r.circle ? h('span', { class: 'tag f' }, 'circle') : null, ' ', h('span', { class: 'm' }, ago(r.created_at) + (pop ? ' \u00B7 \u2665 ' + fmt(pop) : '') + (r.replies ? ' \u00B7 ' + fmt(r.replies) + ' repl' + (r.replies === 1 ? 'y' : 'ies') : '')), h('div', { class: 'txt' }, richText(r.content.slice(0, 280), true))));
+    return h('div', { class: 'rp' }, avatar(r.pubkey, 'sm'), h('div', {}, who(r.pubkey), ' ', r.circle ? h('span', { class: 'tag f' }, 'circle') : null, ' ', h('span', { class: 'm' }, ago(r.created_at) + (pop ? ' \u00B7 \u2665 ' + fmt(pop) : '') + (r.replies ? ' \u00B7 ' + fmt(r.replies) + ' repl' + (r.replies === 1 ? 'y' : 'ies') : '')), h('div', { class: 'txt' }, richText(r.content.slice(0, 280), true))));
   }
   function quoteCard(q) {
-    return h('div', { class: 'quote' }, h('div', { class: 'nh' }, avatar(q.pubkey, 'xs'), h('b', { style: 'font-size:13px' }, prof(q.pubkey).name), h('span', { class: 'm' }, '\u00B7 ' + ago(q.created_at))), h('div', { class: 'txt' }, richText(q.content.slice(0, 400), true)), (q.media || []).filter(function (m) { return m.type === 'image'; }).slice(0, 1).map(function (m) { return h('div', { class: 'ig n1g' }, h('img', { src: m.src, alt: m.alt || '', loading: 'lazy' })); }));
+    return h('div', { class: 'quote' }, h('div', { class: 'nh' }, avatar(q.pubkey, 'xs'), h('span', { style: 'font-size:13px' }, who(q.pubkey)), h('span', { class: 'm' }, '\u00B7 ' + ago(q.created_at))), h('div', { class: 'txt' }, richText(q.content.slice(0, 400), true)), (q.media || []).filter(function (m) { return m.type === 'image'; }).slice(0, 1).map(function (m) { return h('div', { class: 'ig n1g' }, h('img', { src: m.src, alt: m.alt || '', loading: 'lazy' })); }));
   }
 
   // ---------- "why this" popover ----------
   var popEl = null;
   function closePop() { if (popEl) { popEl.remove(); popEl = null; } }
   document.addEventListener('click', function (e) { if (popEl && !popEl.contains(e.target)) closePop(); });
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { closePop(); closeModal(); } });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape' || document.querySelector('.zs')) return;
+    if (/^(TEXTAREA|INPUT)$/.test(e.target.tagName) && e.target.value) return; // don't lose a half-written reply
+    closePop(); closeModal();
+  });
   function why(it, anchor) {
     closePop();
     var x = R.explain(it.f, S.weights), max = Math.max.apply(null, x.reasons.map(function (r) { return Math.abs(r.value); }).concat([0.01]));
@@ -273,10 +296,11 @@
       if (el.classList.contains('sel')) fresh.classList.add('sel');
       el.replaceWith(fresh);
     });
+    document.querySelectorAll('.vc[data-id="' + it.id + '"]').forEach(function (el) { var m = el.querySelector('.mini'); if (m) m.replaceWith(miniActs(it, el._open)); });
     var pa = panelEl && S.sel === it && panelEl.querySelector('.pacts');
     if (pa) pa.replaceWith(panelActs(it));
   }
-  function panelActs(it) { var r = actsRow(it, function () { var t = panelEl.querySelector('.cmp textarea'); if (t) t.focus(); }); r.classList.add('pacts'); return r; }
+  function panelActs(it) { var r = actsRow(it, function () { var t = panelEl.querySelector('.cmp:not(.inl) textarea'); if (t) t.focus(); }); r.classList.add('pacts'); return r; }
   function mine(it, k) { return !!((k === 'l' ? S.liked : S.reposted)[it.id] || (it.me && it.me[k])); }
   function quiet(e) { if (e && e.message !== 'cancelled') toast('Not sent: ' + e.message); }
 
@@ -285,7 +309,7 @@
   // reply lined up underneath (people you know first, then the most popular).
   function select(it, focus, idx) {
     S.sel = it; S.focus = focus || null; S.idx = idx || 0;
-    if (!inModal && !(S.section === 'circle' || (it.story && S.section === 'news'))) { openModal(it); return; }
+    if (!inModal && !(S.section === 'circle' || S.section === 'person' || (it.story && S.section === 'news'))) { openModal(it); return; }
     document.querySelectorAll('.n1.sel,.card.sel').forEach(function (n) { n.classList.remove('sel'); });
     var el = document.querySelector('[data-id="' + it.id + '"]'); if (el) el.classList.add('sel');
     renderPanel();
@@ -302,7 +326,7 @@
       return;
     }
     panelEl.classList.add('open');
-    add(panelEl, h('div', { class: 'ptabs' }, avatar(it.pubkey, 'xs'), h('b', { style: 'font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, it.story ? (it.sharers.length > 1 ? 'Shared by ' + it.sharers.length + ' people' : 'Shared by ' + prof(it.pubkey).name) : prof(it.pubkey).name),
+    add(panelEl, h('div', { class: 'ptabs' }, avatar(it.pubkey, 'xs'), it.story ? h('b', { style: 'font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, it.sharers.length > 1 ? 'Shared by ' + it.sharers.length + ' people' : 'Shared by ' + prof(it.pubkey).name) : who(it.pubkey, 'font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'),
       h('span', { class: 'm', style: 'margin-left:6px;white-space:nowrap' }, ago(it.created_at)),
       btn('\u2715', { class: 'more', 'aria-label': 'Close panel', style: 'margin-left:auto;color:var(--tx3)' }, closePanel)));
     var pb = h('div', { class: 'pb' });
@@ -350,44 +374,191 @@
     pb.appendChild(h('div', { class: 'h6', style: 'margin-top:6px' }, 'Shared in your circle'));
     c.notes.forEach(function (n) { pb.appendChild(replyRow(n)); });
   }
+  // Replies: every reply under the post, threaded. "Reply" under a comment
+  // opens a composer right there; the box at the bottom replies to the post.
+  // Your own replies show at once, before the relays echo them back.
+  var myReplies = {};
+  function composer(root, parent, after, inline) {
+    var ta = h('textarea', { rows: inline ? '2' : '1', placeholder: 'Reply to ' + prof((parent || root).pubkey).name + '\u2026', 'aria-label': 'Reply to ' + prof((parent || root).pubkey).name });
+    var box;
+    var send = btn('Reply', { class: 'btn p sm' }, function () {
+      var t = ta.value.trim(); if (!t) { ta.focus(); return; }
+      send.disabled = true; send.textContent = 'Sending\u2026';
+      sendReply(root, parent, t).then(function (res) { ta.value = ''; after(t, res || {}, box); }, quiet).then(function () { send.disabled = false; send.textContent = 'Reply'; });
+    });
+    ta.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send.click(); }
+      if (e.key === 'Escape' && inline && !ta.value) box.remove();
+    });
+    box = h('div', { class: inline ? 'cmp inl' : 'cmp' }, avatar(S.me && S.me.owner, 'sm'), ta, h('div', { class: 'cmpb' }, send, inline ? btn('Cancel', { class: 'more' }, function () { box.remove(); }) : null));
+    box._ta = ta;
+    return box;
+  }
   function repliesPanel(pb, it) {
     var head = h('div', { class: 'h6 rh' }, 'Replies' + (it.replies ? ' \u00B7 ' + fmt(it.replies) : ''));
     var list = h('div', { class: 'rlist' }, h('p', { class: 'm' }, 'Loading the conversation\u2026'));
     add(pb, [head, list]);
     if (S.focus === 'replies') setTimeout(function () { pb.scrollTop = head.offsetTop - pb.offsetTop - 8; }, 0); // panel only, never the page
-    var target = it;
-    var ta = h('textarea', { rows: '1', placeholder: 'Reply as ' + (S.me && S.me.profile ? S.me.profile.name : 'you') + '\u2026', 'aria-label': 'Reply' });
-    var send = btn('Reply', { class: 'btn p sm' }, function () {
-      var t = ta.value.trim(); if (!t) return;
-      send.disabled = true;
-      sendReply(it, target, t).then(function () { ta.value = ''; toast('Reply published'); load(true); }, quiet).then(function () { send.disabled = false; });
-    });
-    panelEl.appendChild(h('div', { class: 'cmp' }, avatar(S.me && S.me.owner, 'sm'), ta, send));
+    var last = { replies: [] }, inline = null;
+    function posted(parent) {
+      return function (text, res, box) {
+        var id = res.id || ('local' + Date.now());
+        (myReplies[it.id] = myReplies[it.id] || []).push({ id: id, pubkey: S.me && S.me.owner, created_at: Math.floor(Date.now() / 1000), parent: parent ? parent.id : it.id, circle: true, likes: 0, reposts: 0, replies: 0, content: text, media: [], mine: 1 });
+        it.replies = (it.replies || 0) + 1; patch(it);
+        var ok = (res.relays || []).filter(function (x) { return x.ok; }).length;
+        toast(ok ? 'Reply published' : 'Reply saved on your node; relays are still confirming');
+        if (box && box.classList.contains('inl')) box.remove();
+        draw();
+        var el = list.querySelector('[data-rid="' + id + '"]'); if (el) el.scrollIntoView({ block: 'nearest' });
+      };
+    }
+    var bottom = composer(it, null, posted(null), false);
+    panelEl.appendChild(bottom);
+    function draw() {
+      clear(list); inline = null;
+      var have = {}; last.replies.forEach(function (r) { have[r.id] = 1; });
+      var all = last.replies.concat((myReplies[it.id] || []).filter(function (r) { return !have[r.id]; }));
+      // Server order is already: people you know, then most popular, then oldest.
+      var ids = {}, kids = {}, top = [];
+      all.forEach(function (r) { ids[r.id] = 1; });
+      all.forEach(function (r) { if (r.parent && r.parent !== it.id && ids[r.parent]) (kids[r.parent] = kids[r.parent] || []).push(r); else top.push(r); });
+      function row(r, depth) {
+        var pop = (r.likes || 0) + (r.reposts || 0), el;
+        var replyBtn = btn('Reply', { class: 'more rbtn' }, function () {
+          if (inline && inline.isConnected) { var same = inline._for === r.id; inline.remove(); inline = null; if (same) return; }
+          inline = composer(it, r, posted(r), true); inline._for = r.id;
+          el.insertBefore(inline, el.children[1] || null);
+          inline._ta.focus();
+        });
+        el = h('div', { class: depth ? 'ind' : '', 'data-rid': r.id }, h('div', { class: 'thr' + (r.mine ? ' mine' : '') }, avatar(r.pubkey, 'sm'), h('div', { style: 'min-width:0' }, who(r.pubkey), ' ', r.circle ? h('span', { class: 'tag f' }, r.mine ? 'you' : 'circle') : null, ' ', h('span', { class: 'm' }, ago(r.created_at)),
+          h('div', { class: 'txt', style: 'font-size:13.5px;margin:2px 0 0' }, richText(r.content, true)),
+          (r.media || []).filter(function (m) { return m.type === 'image'; }).map(function (m) { return h('div', { class: 'ig n1g' }, h('img', { src: m.src, alt: m.alt || '', loading: 'lazy' })); }),
+          h('div', { class: 'm', style: 'margin-top:4px' }, replyBtn, pop ? ' \u00B7 \u2665 ' + fmt(pop) : '', r.dup > 1 ? ' \u00B7 posted ' + r.dup + ' times' : ''))));
+        if (depth < 4) (kids[r.id] || []).forEach(function (k) { el.appendChild(row(k, depth + 1)); });
+        return el;
+      }
+      if (!top.length) list.appendChild(h('p', { class: 'm' }, 'No replies yet. Start the conversation.'));
+      top.slice(0, 300).forEach(function (r) { list.appendChild(row(r, 0)); });
+      if (last.hiddenSpam) list.appendChild(h('p', { class: 'm' }, last.hiddenSpam + ' repl' + (last.hiddenSpam === 1 ? 'y' : 'ies') + ' hidden as likely spam'));
+    }
     function load(live) {
       rpc('feed.thread', { id: it.id, live: live }).then(function (t) {
         if (S.sel !== it) return;
         Object.assign(S.profiles, t.profiles || {});
-        clear(list);
-        // Server order is already: people you know, then most popular, then oldest.
-        var ids = {}, kids = {}, top = [];
-        t.replies.forEach(function (r) { ids[r.id] = 1; });
-        t.replies.forEach(function (r) { if (r.parent && r.parent !== it.id && ids[r.parent]) (kids[r.parent] = kids[r.parent] || []).push(r); else top.push(r); });
-        function row(r, depth) {
-          var pop = (r.likes || 0) + (r.reposts || 0);
-          var el = h('div', { class: depth ? 'ind' : '' }, h('div', { class: 'thr' }, avatar(r.pubkey, 'sm'), h('div', { style: 'min-width:0' }, h('b', {}, prof(r.pubkey).name), ' ', r.circle ? h('span', { class: 'tag f' }, 'circle') : null, ' ', h('span', { class: 'm' }, ago(r.created_at)),
-            h('div', { class: 'txt', style: 'font-size:13.5px;margin:2px 0 0' }, richText(r.content, true)),
-            (r.media || []).filter(function (m) { return m.type === 'image'; }).map(function (m) { return h('div', { class: 'ig n1g' }, h('img', { src: m.src, alt: m.alt || '', loading: 'lazy' })); }),
-            h('div', { class: 'm', style: 'margin-top:4px' }, btn('Reply', { class: 'more', style: 'font-weight:500;color:var(--tx3)' }, function () { target = r; ta.placeholder = 'Reply to ' + prof(r.pubkey).name + '\u2026'; ta.focus(); }), pop ? ' \u00B7 \u2665 ' + fmt(pop) : ''))));
-          if (depth < 4) (kids[r.id] || []).forEach(function (k) { el.appendChild(row(k, depth + 1)); });
-          return el;
-        }
-        if (!top.length) list.appendChild(h('p', { class: 'm' }, 'No replies yet. Start the conversation.'));
-        top.slice(0, 300).forEach(function (r) { list.appendChild(row(r, 0)); });
-        if (t.hiddenSpam) list.appendChild(h('p', { class: 'm' }, t.hiddenSpam + ' repl' + (t.hiddenSpam === 1 ? 'y' : 'ies') + ' hidden as likely spam'));
+        // Keep an open inline reply box (and what is typed in it) across the live refresh.
+        if (inline && inline.isConnected && inline._ta.value) { last = t; if (!live) load(true); return; }
+        last = t; draw();
         if (!live) load(true);
       }, function () { clear(list); list.appendChild(h('p', { class: 'm' }, 'Could not load replies.')); });
     }
     load(false);
+  }
+
+  // ---------- zaps (NIP-57, paid from the owner's own wallet) ----------
+  var AMOUNTS = [21, 100, 500, 1000, 5000, 10000];
+  function qrSvg(rows) {
+    var n = rows.length, d = '', q = 4;
+    rows.forEach(function (r, y) { var x = 0; while (x < n) { if (r[x] === '1') { var s0 = x; while (x < n && r[x] === '1') x++; d += 'M' + (s0 + q) + ' ' + (y + q) + 'h' + (x - s0) + 'v1h-' + (x - s0) + 'z'; } else x++; } });
+    var v = document.createElementNS(NS, 'svg'), bg = document.createElementNS(NS, 'rect'), pa = document.createElementNS(NS, 'path');
+    v.setAttribute('viewBox', '0 0 ' + (n + 2 * q) + ' ' + (n + 2 * q)); v.setAttribute('class', 'qr'); v.setAttribute('role', 'img'); v.setAttribute('aria-label', 'Lightning invoice QR code'); v.setAttribute('shape-rendering', 'crispEdges');
+    bg.setAttribute('width', '100%'); bg.setAttribute('height', '100%'); bg.setAttribute('fill', '#fff'); pa.setAttribute('d', d); pa.setAttribute('fill', '#000');
+    v.appendChild(bg); v.appendChild(pa);
+    return v;
+  }
+  function zapSheet(it) {
+    var pk = it.pubkey, name = prof(pk).name, amt = S.zapAmt || 1000;
+    var box = h('div', { class: 'glass zbox' });
+    var wrap = h('div', { class: 'modal zs', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Zap ' + name }, box);
+    function close() { wrap.remove(); document.removeEventListener('keydown', esc, true); }
+    function esc(e) { if (e.key === 'Escape') { e.stopPropagation(); close(); } }
+    document.addEventListener('keydown', esc, true);
+    wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
+    document.body.appendChild(wrap);
+    function head(title, sub) { return h('div', { class: 'zh' }, avatar(pk, 'sm'), h('div', { style: 'min-width:0' }, h('b', {}, title), sub ? h('div', { class: 'm' }, sub) : null), btn('\u2715', { class: 'more zx', 'aria-label': 'Close' }, close)); }
+    function pick() {
+      clear(box);
+      var go = btn('', { class: 'btn p zgo' }, function () { send(amt, note.value.trim()); });
+      var chips = AMOUNTS.map(function (v) { var c = btn(fmt(v), {}, function () { amt = v; custom.value = ''; sync(); }); c._v = v; return c; });
+      var custom = h('input', { class: 'zin', type: 'number', min: '1', max: '1000000', step: '1', inputmode: 'numeric', placeholder: 'Other amount', 'aria-label': 'Other amount in sats' });
+      var note = h('input', { class: 'zin', type: 'text', maxlength: '280', placeholder: 'Add a note (optional)', 'aria-label': 'Note with the zap' });
+      function sync() { go.textContent = 'Zap ' + amt.toLocaleString() + ' sats'; chips.forEach(function (c) { c.setAttribute('aria-pressed', c._v === amt ? 'true' : 'false'); }); }
+      custom.addEventListener('input', function () { var v = Math.floor(Number(custom.value)); if (v >= 1 && v <= 1e6) { amt = v; sync(); } });
+      note.addEventListener('keydown', function (e) { if (e.key === 'Enter') go.click(); });
+      add(box, [head('Zap ' + name, it.id ? 'For this post' : 'Straight to them'), h('div', { class: 'seg zam', role: 'group', 'aria-label': 'Amount in sats' }, chips), h('div', { class: 'zrow' }, custom, h('span', { class: 'm' }, 'sats')), note, go,
+        h('p', { class: 'm' }, 'Paid from your own Lightning wallet. You confirm the amount before anything is signed.')]);
+      sync();
+    }
+    function send(sats, comment) {
+      S.zapAmt = sats;
+      clear(box); add(box, [head('Zap ' + name), h('p', { class: 'm' }, 'Asking ' + name + '\u2019s wallet for an invoice\u2026')]);
+      rpc('feed.zap', { pubkey: pk, id: it.id || null, kind: it.kind || null, sats: sats, comment: comment, name: name }, 300000).then(function (r) {
+        if (!wrap.isConnected) return;
+        if (r.paid) done(r.sats); else invoice(r);
+      }, function (e) {
+        if (e.message === 'cancelled') return close();
+        clear(box); add(box, [head('Zap ' + name), h('p', {}, 'Could not zap: ' + e.message), btn('Back', { class: 'btn' }, pick)]);
+      });
+    }
+    function invoice(r) {
+      clear(box);
+      var st = h('p', { class: 'm', role: 'status' }, 'Waiting for payment\u2026');
+      add(box, [head('Pay ' + r.sats.toLocaleString() + ' sats', 'Scan with any Lightning wallet'), r.qr ? qrSvg(r.qr) : null,
+        h('div', { class: 'zrow c' }, btn('Open wallet', { class: 'btn p' }, function () { tell('feed.lightning', { pr: r.pr }); }),
+          btn('Copy invoice', { class: 'btn' }, function () { rpc('feed.copy', { text: r.pr }).then(function () { toast('Invoice copied'); }, function () { inv.focus(); toast('Select the invoice text to copy it'); }); })),
+        h('input', { class: 'zin inv', readonly: true, value: r.pr, 'aria-label': 'Invoice', onfocus: function (e) { e.target.select(); } }), st]);
+      var inv = box.querySelector('.inv'), t0 = Date.now();
+      (function poll() {
+        if (!wrap.isConnected) return;
+        if (Date.now() - t0 > 600000) { st.textContent = 'Stopped checking. If you paid, the zap shows after the next refresh.'; return; }
+        rpc('feed.zapcheck', { req: r.req }).then(function (x) { if (x.paid) done(r.sats); else setTimeout(poll, 3000); }, function () { setTimeout(poll, 6000); });
+      })();
+    }
+    function done(sats) {
+      if (it.id) { S.zapped[it.id] = (S.zapped[it.id] || 0) + sats; if (it.f) patch(it); }
+      clear(box); add(box, [h('div', { class: 'zdone' }, icon('bolt'), h('b', {}, sats.toLocaleString() + ' sats sent'), h('p', { class: 'm' }, 'Zapped ' + name + '.')), btn('Close', { class: 'btn' }, close)]);
+      setTimeout(close, 2500);
+    }
+    pick();
+  }
+
+  // ---------- profile page ----------
+  function person(pk) {
+    closePop(); closeModal();
+    if (S.section !== 'person') S.prev = S.section;
+    S.person = pk; go('person');
+  }
+  function personPage() {
+    var pk = S.person, shown = -1;
+    var head = h('div', { class: 'glass phead' }, h('p', { class: 'm' }, 'Opening ' + prof(pk).name + '\u2026'));
+    var posts = h('div', { class: 'feed' });
+    var feed = h('div', { class: 'feed' }, head, posts);
+    panelEl = h('aside', { class: 'glass panel', 'aria-label': 'Details' });
+    pg.appendChild(h('div', { class: 'lay' }, feed, panelEl));
+    renderPanel();
+    function tagEl(t, c) { return h('span', { class: 'tag' + (c ? ' ' + c : '') }, t); }
+    function draw(d, final) {
+      Object.assign(S.profiles, d.profiles || {}); Object.assign(S.quoted, d.quoted || {});
+      var p = d.profile, rel = d.rel;
+      S.profiles[pk] = Object.assign({}, S.profiles[pk] || {}, p);
+      clear(head);
+      add(head, [btn('\u2039 Back', { class: 'more' }, function () { go(S.prev && S.prev !== 'person' ? S.prev : 'circle'); }),
+        h('div', { class: 'ph' }, avatar(pk, 'xl', p.big),
+          h('div', { style: 'min-width:0' }, h('h2', {}, p.name), h('div', { class: 'm' }, [p.nip05 ? p.nip05.replace(/^_@/, '') : '', p.lud16].filter(Boolean).join(' \u00B7 ')),
+            h('div', { class: 'tags' }, rel.owner ? tagEl('You', 'f') : rel.follow ? tagEl('In your circle', 'f') : rel.hop2 ? tagEl('Followed by ' + rel.hop2 + ' in your circle') : tagEl('Outside your circle'), rel.muted ? tagEl('Muted', 'warn') : null))),
+        p.about ? h('div', { class: 'txt' }, richText(p.about, true)) : null,
+        h('div', { class: 'acts' }, p.zap && !rel.owner ? act([icon('bolt'), ' Zap'], { class: 'zb' }, function () { zapSheet({ pubkey: pk }); }) : null,
+          act('Copy npub', {}, function () { rpc('feed.copy', { text: p.npub }).then(function () { toast('npub copied'); }, function () { toast('Could not copy'); }); }))]);
+      if (d.items.length === shown && !final) return;
+      shown = d.items.length;
+      clear(posts);
+      d.items.sort(function (a, b) { return b.created_at - a.created_at; }).forEach(function (it) { posts.appendChild(noteCard(it, { peek: false })); });
+      if (!d.items.length) posts.appendChild(h('div', { class: 'glass empty' }, final ? 'No recent posts from ' + p.name + '.' : 'Looking for recent posts\u2026'));
+    }
+    rpc('feed.author', { pk: pk }).then(function (d) {
+      if (S.section !== 'person' || S.person !== pk) return;
+      draw(d, false);
+      return rpc('feed.author', { pk: pk, live: true }).then(function (d2) { if (S.section === 'person' && S.person === pk) { shown = -1; draw(d2, true); } });
+    }).catch(function (e) { clear(head); head.appendChild(h('p', { class: 'm' }, 'Could not open this profile: ' + e.message)); });
   }
 
   // ---------- modal (used outside Circle, and for the reader/player) ----------
@@ -453,7 +624,7 @@
       clear(art);
       add(art, [x.image ? h('div', { class: 'viewer', style: 'max-height:340px;min-height:180px' }, h('img', { src: x.image, alt: '' })) : null,
         h('h1', {}, x.title || 'Untitled'),
-        h('div', { class: 'nh', style: 'margin-bottom:22px' }, avatar(x.pubkey, 'sm'), h('span', {}, h('b', {}, p.name), h('span', { class: 'm' }, ' \u00B7 ' + ago(x.created_at) + ' \u00B7 ' + Math.max(1, Math.round(words / 230)) + ' min read')), viaLine(x)),
+        h('div', { class: 'nh', style: 'margin-bottom:22px' }, avatar(x.pubkey, 'sm'), h('span', {}, who(x.pubkey), h('span', { class: 'm' }, ' \u00B7 ' + ago(x.created_at) + ' \u00B7 ' + Math.max(1, Math.round(words / 230)) + ' min read')), viaLine(x)),
         (x.highlights || []).length ? h('div', { class: 'side', style: 'margin-bottom:20px' }, h('div', { class: 'h6' }, 'Highlighted by your circle'), x.highlights.slice(0, 3).map(function (hl) { return h('div', { class: 'hl' }, '\u201C' + hl.text + '\u201D ', h('span', { class: 'm' }, '\u2014 ' + prof(hl.pubkey).name)); })) : null,
         markdown(x.content, x.imgs || {})]);
     }, function () { clear(art); art.appendChild(h('p', { class: 'm' }, 'Could not open this article.')); });
@@ -489,6 +660,7 @@
     shellUI();
     var s = S.section;
     if (s === 'signal') return signalPage();
+    if (s === 'person') return personPage();
     pg.appendChild(h('p', { class: 'm', style: 'padding:30px;text-align:center' }, 'Gathering\u2026'));
     load(s).then(function (d) {
       if (S.section !== s) return;
@@ -568,17 +740,32 @@
     var pic = poster(it), ap = prof(it.pubkey).pic;
     var cover = h('span', { class: 'cover' }, pic ? h('img', { src: pic, alt: '', loading: 'lazy' }) : ap ? h('img', { class: 'blur', src: ap, alt: '', loading: 'lazy' }) : null, h('span', { class: 'play' }, '\u25B6'));
     if (!pic && v && v.src) framePoster(cover, v.src);
-    return btn([cover, h('span', { class: 'nh' }, avatar(it.pubkey, 'xs'), h('b', { style: 'font-size:13px' }, prof(it.pubkey).name), h('span', { class: 'm' }, ago(it.created_at))), h('span', { class: 'sum' }, (it.title || it.content || '').replace(/https:\/\/\S+/g, '').trim().slice(0, 140))],
-      { class: 'glass card' }, function () { if (v) watchModal(it, v); });
+    var open = function (focus) { if (v) watchModal(it, v, focus); };
+    var words = (it.title || it.content || '').replace(/https:\/\/\S+/g, '').trim();
+    var card = h('div', { class: 'glass card vc', 'data-id': it.id, tabindex: '0', role: 'button', 'aria-label': 'Play video from ' + prof(it.pubkey).name },
+      cover, h('span', { class: 'nh' }, avatar(it.pubkey, 'xs'), who(it.pubkey, 'font-size:13px'), h('span', { class: 'm' }, ago(it.created_at))),
+      words ? h('span', { class: 'sum' }, richText(words.slice(0, 220), true)) : null, miniActs(it, open));
+    card._open = open;
+    card.addEventListener('click', function () { open(); });
+    card.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target === card) open(); });
+    return card;
+  }
+  // Small reply / like / zap row on Watch cards; counts only where there are some.
+  function miniActs(it, open) {
+    var liked = mine(it, 'l'), likes = (it.f.ge || 0) + (S.liked[it.id] && !(it.me && it.me.l) ? 1 : 0);
+    return h('div', { class: 'mini' },
+      act([icon('reply'), it.replies ? fmt(it.replies) : ''], { 'aria-label': 'Replies' }, function () { open('replies'); }),
+      act([icon('heart'), likes ? fmt(likes) : ''], { 'aria-pressed': liked ? 'true' : 'false', 'aria-label': liked ? 'Liked' : 'Like' }, function () { if (!liked) like(it); }),
+      zapAct(it, true));
   }
   // Big player: the video fills the stage, and the author, post, actions and
   // replies sit beside it (below it on phones), all inside the viewport.
-  function watchModal(it, v) {
+  function watchModal(it, v, focus) {
     var vid = h('video', { src: v.src, controls: true, autoplay: true, playsinline: true, preload: 'metadata' });
     var p = h('aside', { class: 'glass panel open' });
     p._acts = true;
     modal(h('div', { class: 'vmod' }, h('div', { class: 'stage' }, vid), p), true, 'vm');
-    pagePanel = panelEl; panelEl = p; inModal = true; S.sel = it; S.focus = null; renderPanel();
+    pagePanel = panelEl; panelEl = p; inModal = true; S.sel = it; S.focus = focus || null; renderPanel();
   }
   function liveCard(l) {
     return h('div', { class: 'glass card' }, h('span', { class: 'cover' }, l.image ? h('img', { src: l.image, alt: '' }) : null, h('span', { class: 'kb live', style: 'position:absolute;top:10px;left:10px' }, 'LIVE' + (l.viewers ? ' \u00B7 ' + fmt(l.viewers) : ''))), h('span', { class: 'nh' }, avatar(l.pubkey, 'xs'), h('b', { style: 'font-size:13px' }, prof(l.pubkey).name)), h('span', { class: 'sum' }, l.title));
@@ -650,7 +837,7 @@
       Object.assign(S.profiles, x.profiles || {});
       clear(stats);
       [['People you follow', x.follows], ['Friends of friends', x.hop2], ['Posts in 48h', x.items48h], ['Relays read', x.relays]].forEach(function (s) { stats.appendChild(h('div', { class: 'glass stat' }, h('b', {}, fmt(s[1])), h('span', { class: 'm' }, s[0]))); });
-      x.voices.slice(0, 8).forEach(function (v) { voices.appendChild(h('div', { class: 'glass card', style: 'flex-direction:row;align-items:center;padding:10px 12px' }, avatar(v.pk, 'sm'), h('b', { style: 'font-size:13px' }, prof(v.pk).name), h('span', { class: 'm', style: 'margin-left:auto' }, v.n + ' posts'))); });
+      x.voices.slice(0, 8).forEach(function (v) { voices.appendChild(h('div', { class: 'glass card', style: 'flex-direction:row;align-items:center;padding:10px 12px' }, avatar(v.pk, 'sm'), who(v.pk, 'font-size:13px'), h('span', { class: 'm', style: 'margin-left:auto' }, v.n + ' posts'))); });
       if (x.topics.length) voices.appendChild(h('div', {}, x.topics.slice(0, 12).map(function (t) { return h('span', { class: 'chip', style: 'margin:0 6px 6px 0' }, '#' + t[0]); })));
     }, function () { clear(stats); });
   }

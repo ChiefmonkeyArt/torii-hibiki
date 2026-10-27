@@ -46,7 +46,7 @@ export function makeFeed({ cfg, store, ingest, signer }) {
   function profile(pk) {
     const ev = store.getReplaceable(0, pk);
     const p = ev ? parseProfile(ev) : { name: '', about: '', picture: '', nip05: '' };
-    return { name: p.name || nip19.npubEncode(pk).slice(0, 12) + '…', about: p.about, nip05: p.nip05, lud16: p.lud16 || '', pic: p.picture ? signer.img(p.picture, 96) : null, npub: nip19.npubEncode(pk) };
+    return { name: p.name || nip19.npubEncode(pk).slice(0, 12) + '…', about: p.about, nip05: p.nip05, lud16: p.lud16 || '', zap: !!(p.lud16 || p.lud06), pic: p.picture ? signer.img(p.picture, 96) : null, npub: nip19.npubEncode(pk) };
   }
 
   /** Engagement on a set of ids, split into circle and wider audience. */
@@ -294,10 +294,34 @@ export function makeFeed({ cfg, store, ingest, signer }) {
     const root = store.getEvent(id);
     const rs = repliesTo(id, 500);
     const eng = engagement([id, ...rs.map((r) => r.id)]);
-    const replies = orderReplies(rs.map((r) => ({ ...replyOut(r, eng, replyRefs(r).reply), content: r.content.slice(0, 2000), media: mediaOut(extract(r).media.slice(0, 2)) })));
+    // The same person posting the same words more than once shows once, with a count.
+    const seen = new Map(), uniq = [];
+    for (const r of [...rs].sort((a, b) => a.created_at - b.created_at)) {
+      const k = r.pubkey + '|' + r.content.trim().toLowerCase();
+      if (seen.has(k)) { seen.get(k).dup++; continue; }
+      const x = { ...replyOut(r, eng, replyRefs(r).reply), content: r.content.slice(0, 2000), media: mediaOut(extract(r).media.slice(0, 2)), dup: 1 };
+      seen.set(k, x); uniq.push(x);
+    }
+    const replies = orderReplies(uniq).map((r) => (r.dup > 1 ? r : (({ dup, ...x }) => x)(r)));
     const spam = replies.filter((r) => r.s < 0.5).length;
     const items = root ? [item(root, eng, new Map())] : [];
     return { root: items[0] || null, replies: replies.filter((r) => r.s >= 0.5), hiddenSpam: spam, profiles: withProfiles([...items, ...replies]), quoted: quoted(items) };
+  }
+
+  /** A person's page: their profile, how they relate to the owner, and their recent original posts. */
+  function author(pk) {
+    const ev = store.getReplaceable(0, pk);
+    const p = ev ? parseProfile(ev) : {};
+    const posts = store.getByFilters({ kinds: [1, 20, 21, 22, 30023], authors: [pk], limit: 200 })
+      .filter((e) => e.kind !== 1 || isRootNote(e)).sort((a, b) => b.created_at - a.created_at).slice(0, 40);
+    const eng = engagement(posts.map((e) => e.id));
+    const items = posts.map((e) => item(e, eng, new Map()));
+    const prof = { ...profile(pk), about: p.about || '', big: p.picture ? signer.img(p.picture, 320) : null };
+    return {
+      pubkey: pk, profile: prof, items,
+      rel: { owner: pk === cfg.owner, follow: g.follows.has(pk), hop2: g.hop2.get(pk) || 0, muted: g.mutes.has(pk) },
+      profiles: withProfiles(items, [pk]), quoted: quoted(items),
+    };
   }
 
   /** Full long-form article for the reader. */
@@ -333,5 +357,5 @@ export function makeFeed({ cfg, store, ingest, signer }) {
     };
   }
 
-  return { section, thread, note, signal, profile, SECTIONS };
+  return { section, thread, note, author, signal, profile, SECTIONS };
 }

@@ -73,29 +73,60 @@
     p.then(function (d) { send('feed.result', d, id); }, function (e) { send('feed.error', { message: e.message, status: e.status || 0 }, id); });
   }
   var confirmQ = Promise.resolve();
-  function confirmPublish(draft) {
-    // Serialise dialogs; each publish waits for the previous decision.
+  // One dialog at a time; each request waits for the previous decision.
+  // o: { title, body, meta, yes, sub, skip7 }
+  function ask(o) {
     var run = function () {
       return new Promise(function (resolve, reject) {
         var dlg = $('confirm');
-        $('c-title').textContent = draft.title || 'Publish to Nostr?';
-        $('c-body').textContent = draft.preview || draft.content || '';
-        $('c-kind').textContent = 'kind ' + draft.kind + (draft.tags && draft.tags.length ? ' · ' + draft.tags.length + ' tags' : '');
-        $('c-skip').hidden = draft.kind !== 7; $('c-skipbox').checked = false;
-        var done = function (ok) { if (ok && draft.kind === 7 && $('c-skipbox').checked) store.set('skip7', true); dlg.close(); $('c-yes').onclick = $('c-no').onclick = null; ok ? resolve() : reject(new Error('cancelled')); };
+        $('c-title').textContent = o.title;
+        $('c-body').textContent = o.body || '';
+        $('c-kind').textContent = o.meta || '';
+        $('c-sub').textContent = o.sub || 'Your signer will ask you to sign this event. Nothing is sent until you approve.';
+        $('c-yes').textContent = o.yes || 'Sign and publish';
+        $('c-skip').hidden = !o.skip7; $('c-skipbox').checked = false;
+        var done = function (ok) { if (ok && o.skip7 && $('c-skipbox').checked) store.set('skip7', true); dlg.close(); $('c-yes').onclick = $('c-no').onclick = null; ok ? resolve() : reject(new Error('cancelled')); };
         $('c-yes').onclick = function () { done(true); };
         $('c-no').onclick = function () { done(false); };
         dlg.oncancel = function () { done(false); };
         dlg.showModal();
       });
     };
-    // Likes can skip this dialog once the owner opts out (re-enable on the Signal page).
-    var p = draft.kind === 7 && store.get('skip7', false) ? confirmQ : confirmQ.then(run);
+    var p = o.skip ? confirmQ : confirmQ.then(run);
     confirmQ = p.catch(function () {});
-    return p.then(function () {
-      return window.nostr.signEvent({ kind: draft.kind, created_at: Math.floor(Date.now() / 1000), tags: draft.tags || [], content: draft.content || '' });
-    }).then(function (ev) { return call('publish', { method: 'POST', body: JSON.stringify(ev) }); });
+    return p;
   }
+  function sign(kind, tags, content) { return window.nostr.signEvent({ kind: kind, created_at: Math.floor(Date.now() / 1000), tags: tags || [], content: content || '' }); }
+  function confirmPublish(draft) {
+    // Likes can skip the dialog once the owner opts out (re-enable on the Signal page).
+    return ask({ title: draft.title || 'Publish to Nostr?', body: draft.preview || draft.content || '', meta: 'kind ' + draft.kind + (draft.tags && draft.tags.length ? ' · ' + draft.tags.length + ' tags' : ''), skip7: draft.kind === 7, skip: draft.kind === 7 && store.get('skip7', false) })
+      .then(function () { return sign(draft.kind, draft.tags, draft.content); })
+      .then(function (ev) { return call('publish', { method: 'POST', body: JSON.stringify(ev) }); });
+  }
+  // Zap (NIP-57): the node looks up the wallet and checks the invoice; the
+  // owner confirms the amount here (never skippable), signs the zap request,
+  // then pays from a browser wallet (WebLN) or scans the invoice.
+  var HEX = /^[0-9a-f]{64}$/;
+  function zap(d) {
+    var sats = Math.floor(Number(d.sats)), comment = String(d.comment || '').slice(0, 280), req = null;
+    if (!HEX.test(d.pubkey || '') || (d.id && !HEX.test(d.id)) || !(sats >= 1 && sats <= 1000000)) return Promise.reject(new Error('bad zap'));
+    return call('zap/info/' + d.pubkey).then(function (info) {
+      if (sats < info.min || sats > info.max) throw new Error('their wallet takes ' + info.min.toLocaleString() + ' to ' + info.max.toLocaleString() + ' sats');
+      return ask({ title: 'Zap ' + sats.toLocaleString() + ' sats?', body: (comment ? comment + '\n\n' : '') + 'To ' + String(d.name || 'this person').slice(0, 60) + ' at ' + info.address + '.', meta: sats.toLocaleString() + ' sats · real bitcoin', sub: 'This pays from your own Lightning wallet. Your signer signs the zap request first; nothing is paid until your wallet confirms.', yes: 'Zap ' + sats.toLocaleString() + ' sats' })
+        .then(function () {
+          var tags = [['relays'].concat(info.relays), ['amount', String(sats * 1000)], ['lnurl', info.lnurl], ['p', d.pubkey]];
+          if (d.id) { tags.push(['e', d.id]); if (d.kind) tags.push(['k', String(d.kind)]); }
+          return sign(9734, tags, comment);
+        });
+    }).then(function (ev) { req = ev.id; return call('zap/invoice', { method: 'POST', body: JSON.stringify(ev) }); })
+      .then(function (inv) {
+        var out = { pr: inv.pr, qr: inv.qr, sats: sats, req: req };
+        if (!window.webln) return out;
+        return Promise.resolve(window.webln.enable()).then(function () { return window.webln.sendPayment(inv.pr); })
+          .then(function () { return { paid: true, sats: sats, req: req }; }, function () { return out; });
+      });
+  }
+  var INVOICE = /^lnbc[0-9a-z]{20,2000}$/;
 
   function init() { send('feed.init', { me: me, theme: theme(), tune: store.get('tune', null), onboarded: store.get('onboarded', false), askLikes: !store.get('skip7', false), version: me && me.version }); }
   var KINDS = { 1: 1, 6: 1, 7: 1, 10000: 1, 30004: 1, 30078: 1 };
@@ -111,6 +142,13 @@
       case 'feed.thread': if (/^[0-9a-f]{64}$/.test(d.id)) reply(m.id, call('thread/' + d.id + (d.live ? '?live=1' : ''))); break;
       case 'feed.note': if (/^[0-9a-f]{64}$/.test(d.id)) reply(m.id, call('note/' + d.id)); break;
       case 'feed.link': reply(m.id, call('link?url=' + encodeURIComponent(d.url || '') + '&sig=' + encodeURIComponent(d.sig || ''))); break;
+      case 'feed.author': if (HEX.test(d.pk || '')) reply(m.id, call('author/' + d.pk + (d.live ? '?live=1' : ''))); break;
+      case 'feed.zap': if (window.nostr) reply(m.id, zap(d)); else send('feed.error', { message: 'no signer' }, m.id); break;
+      case 'feed.zapcheck': if (HEX.test(d.req || '')) reply(m.id, call('zap/receipt/' + d.req)); break;
+      case 'feed.lightning': if (INVOICE.test(d.pr || '')) window.open('lightning:' + d.pr, '_blank', 'noopener,noreferrer'); break;
+      case 'feed.copy':
+        if (INVOICE.test(d.text || '') || /^npub1[02-9ac-hj-np-z]{58}$/.test(d.text || '')) reply(m.id, navigator.clipboard.writeText(d.text).then(function () { return { ok: true }; }));
+        break;
       case 'feed.signal': reply(m.id, call('signal')); break;
       case 'feed.status': reply(m.id, call('health')); break;
       case 'feed.sync': reply(m.id, call('sync', { method: 'POST' })); break;

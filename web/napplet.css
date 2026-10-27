@@ -132,6 +132,27 @@ input[type=range]{width:100%;accent-color:var(--a)}
 .empty{padding:40px 20px;text-align:center;color:var(--tx3)}
 @media (max-width:1100px){.lay{grid-template-columns:minmax(0,1fr) 360px}.two{grid-template-columns:1fr}}
 img.broken{opacity:0}
+.who{background:none;border:0;padding:0;font:inherit;font-weight:700;color:inherit;cursor:pointer;text-align:left;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}.who:hover{color:var(--a);text-decoration:underline;text-underline-offset:2px}
+.ic{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linejoin:round;stroke-linecap:round;vertical-align:-3px;flex-shrink:0}
+[aria-pressed=true]>.ic{fill:currentColor}.zb .ic,.zt .ic,.zdone .ic{stroke:#e8930c}.zb[aria-pressed=true] .ic{fill:#e8930c}.acts>button.zb:hover{color:#e8930c}
+.vc{cursor:pointer}.vc:focus-visible{outline:2px solid var(--a);outline-offset:2px}
+.mini{display:flex;gap:2px;margin:auto -6px 0;padding-top:2px;opacity:.8;transition:opacity .15s}.vc:hover .mini,.vc:focus-within .mini{opacity:1}
+.mini>button,.mini>span{background:none;border:0;color:var(--tx3);font-size:12px;padding:4px 7px;border-radius:8px;display:inline-flex;gap:5px;align-items:center;min-height:28px}
+.mini>button:hover{background:var(--chip);color:var(--tx)}.mini>button[aria-pressed=true]{color:var(--a)}.mini>.zb{margin-left:auto}
+.rbtn{font-weight:500;color:var(--tx3)}.rbtn:hover{color:var(--a)}
+.cmp.inl{padding:8px 0 2px 36px;border-top:0;align-items:flex-start}.cmp.inl .av{display:none}.cmpb{display:flex;flex-direction:column;gap:6px;align-items:center}
+.thr.mine .txt{color:var(--tx)}
+.modal.zs{z-index:80}.modal>.glass.zbox{max-width:380px;display:flex;flex-direction:column;gap:12px;padding:18px}
+.zh{display:flex;gap:10px;align-items:center}.zh b{font-size:15px}.zx{margin-left:auto;color:var(--tx3);font-size:15px}
+.zam{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;background:none;padding:0}.zam button{padding:10px 6px;border-radius:12px;border:1px solid var(--bd2);background:var(--chip);color:var(--tx);font-size:14px;font-weight:600}
+.zam button[aria-pressed=true]{border-color:var(--a);color:var(--a);background:color-mix(in srgb,var(--a) 10%,var(--chip));box-shadow:none}
+.zin{width:100%;padding:9px 12px;border-radius:12px;border:1px solid var(--bd2);background:var(--chip);color:var(--tx);font:inherit;font-size:14px;min-width:0}
+.zrow{display:flex;gap:8px;align-items:center}.zrow.c{justify-content:center}.zgo{width:100%;padding:11px}
+.qr{width:100%;max-width:280px;align-self:center;border-radius:12px;display:block}.inv{font:11px/1.4 ui-monospace,monospace;color:var(--tx3)}
+.zdone{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px;text-align:center}.zdone .ic{width:42px;height:42px}.zdone p{margin:0}
+.phead{padding:18px 20px;border-radius:18px;display:flex;flex-direction:column;gap:12px;align-items:flex-start}.ph{display:flex;gap:16px;align-items:center;min-width:0}
+.ph h2{margin:0 0 2px;font-size:22px;letter-spacing:-.01em;overflow-wrap:anywhere}.av.xl{width:84px;height:84px}.tags{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}.tag.warn{color:var(--warn)}
+.phead .txt{margin:0;font-size:14px;line-height:1.55;color:var(--tx2)}.phead .acts{margin:0}
 @media (max-width:860px){.hero img.fg{display:none}.hero .ov{width:100%}.lay{grid-template-columns:1fr}.panel{display:none}.panel.open{display:flex;position:fixed;inset:0;top:0;height:100vh;z-index:40;border-radius:0}.srch{display:none}.top{gap:10px;margin:8px 8px 0;padding:8px 10px}.logo span:last-child{display:none}.pg{padding:14px 10px 50px}.stats{grid-template-columns:1fr 1fr}.sl{grid-template-columns:110px 1fr 36px}.hero{min-height:260px}.hero .ov p{font-size:16px}}
 .hero .kb{align-self:flex-start}
 .pill{white-space:nowrap;flex-shrink:0}
@@ -146,4 +167,5 @@ img.broken{opacity:0}
 .vmod .panel.open{position:static;inset:auto;height:auto;min-height:0;border-radius:0;z-index:1;border:0}
 .vmod .pacts{position:sticky;top:-14px;z-index:2;background:var(--gl);backdrop-filter:blur(14px);justify-content:space-around;border-radius:14px;border:1px solid var(--bd2)}
 .vmod .pacts>button{border-radius:999px;background:var(--chip)}
+.mini{opacity:1}.cmp.inl{padding-left:0}.av.xl{width:64px;height:64px}
 }
