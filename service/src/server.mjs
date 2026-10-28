@@ -103,13 +103,14 @@ export function createApp(cfg, deps = {}) {
     // Zaps (NIP-57): look up, then fetch and check an invoice for an owner-signed request.
     if ((m = /^zap\/info\/([0-9a-f]{64})$/.exec(route))) {
       try { return json(res, 200, await zaps.describe(m[1])); }
-      catch (e) { return json(res, e.status && e.status < 500 ? 422 : 502, { error: e.message }); }
+      catch (e) { log('zap info', m[1].slice(0, 8), e.message); return json(res, e.status && e.status < 500 ? 422 : 502, { error: e.message }); }
     }
     if (route === 'zap/invoice' && post) {
       try {
         const r = await zaps.invoice(await body(req, 16 * 1024));
+        if (!r.bound) log('zap invoice not bound to the request (wallet ignores NIP-57 hash); amount checked');
         return json(res, 200, { ...r, qr: encodeQR(('lightning:' + r.pr).toUpperCase()).rows });
-      } catch (e) { return json(res, e.status && e.status < 500 ? 422 : 502, { error: e.message }); }
+      } catch (e) { log('zap invoice', e.message); return json(res, e.status && e.status < 500 ? 422 : 502, { error: e.message }); }
     }
     if ((m = /^zap\/receipt\/([0-9a-f]{64})$/.exec(route))) return json(res, 200, await zaps.receipt(m[1]));
     if (route === 'sync' && post) { ingest.tick(); return json(res, 202, { ok: true }); }
