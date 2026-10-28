@@ -120,7 +120,7 @@
         });
     }).then(function (ev) { req = ev.id; return call('zap/invoice', { method: 'POST', body: JSON.stringify(ev) }); })
       .then(function (inv) {
-        var out = { pr: inv.pr, qr: inv.qr, sats: sats, req: req };
+        var out = { pr: inv.pr, qr: inv.qr, sats: sats, req: req, bound: inv.bound !== false };
         if (!window.webln) return out;
         return Promise.resolve(window.webln.enable()).then(function () { return window.webln.sendPayment(inv.pr); })
           .then(function () { return { paid: true, sats: sats, req: req }; }, function () { return out; });

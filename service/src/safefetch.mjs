@@ -88,10 +88,11 @@ export function open(url, opts = {}) {
   });
 }
 
-/** Buffers a whole body up to `cap` bytes. */
-export async function fetchBuffer(url, { cap = 8 * 1024 * 1024, accept, timeout = 10000 } = {}) {
+/** Buffers a whole body up to `cap` bytes. `anyStatus` returns error bodies too (status in the result). */
+export async function fetchBuffer(url, { cap = 8 * 1024 * 1024, accept, timeout = 10000, anyStatus = false } = {}) {
   const { res, url: final } = await open(url, { accept, timeout });
-  if ((res.statusCode || 0) !== 200) { res.resume(); throw new FetchError(`upstream ${res.statusCode}`); }
+  const status = res.statusCode || 0;
+  if (status !== 200 && !anyStatus) { res.resume(); throw new FetchError(`upstream ${status}`); }
   const len = Number(res.headers['content-length'] || 0);
   if (len > cap) { res.destroy(); throw new FetchError('too large', 413); }
   const chunks = []; let n = 0;
@@ -103,5 +104,5 @@ export async function fetchBuffer(url, { cap = 8 * 1024 * 1024, accept, timeout 
       chunks.push(c);
     }
   } finally { clearTimeout(deadline); }
-  return { body: Buffer.concat(chunks), type: String(res.headers['content-type'] || ''), url: final };
+  return { status, body: Buffer.concat(chunks), type: String(res.headers['content-type'] || ''), url: final };
 }

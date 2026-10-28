@@ -86,9 +86,23 @@ export function lnurlEndpoint(p) {
   return null;
 }
 
-async function getJson(url) {
-  const r = await fetchBuffer(url, { cap: 64 * 1024, accept: 'application/json', timeout: 8000 });
-  try { return JSON.parse(r.body.toString('utf8')); } catch { throw new FetchError('wallet server sent bad JSON'); }
+/** GETs JSON from a wallet server. Error bodies are read so their LNURL `reason` reaches the owner;
+ *  a 5xx, timeout or dropped connection is retried once (asking again only creates another unpaid invoice). */
+export async function getJson(url, tries = 2, fetch = fetchBuffer) {
+  const host = new URL(url).host;
+  let r;
+  try { r = await fetch(url, { cap: 64 * 1024, accept: 'application/json', timeout: 8000, anyStatus: true }); } catch (e) {
+    if (tries > 1 && !(e.status >= 400 && e.status < 500)) return getJson(url, tries - 1, fetch);
+    throw new FetchError(`${host} did not answer (${e.message})`, 502);
+  }
+  let j = null; try { j = JSON.parse(r.body.toString('utf8')); } catch {}
+  if (r.status >= 500 && tries > 1) return getJson(url, tries - 1, fetch);
+  if (r.status !== 200) {
+    const why = j && typeof j.reason === 'string' ? ': ' + j.reason.slice(0, 120) : '';
+    throw new FetchError(`${host} returned error ${r.status}${why}`, r.status >= 500 ? 502 : 422);
+  }
+  if (!j || typeof j !== 'object') throw new FetchError(`${host} sent a reply that is not JSON`, 502);
+  return j;
 }
 
 /** Reads and checks a LNURL-pay description. Only NIP-57 capable servers can be zapped. */
@@ -138,8 +152,9 @@ export async function zapInvoice(ev, info, get = getJson) {
   const pr = j.pr.toLowerCase();
   const inv = parseBolt11(pr);
   if (inv.msat === null || inv.msat !== BigInt(msat)) throw new FetchError('invoice amount does not match what you confirmed', 422);
-  if (inv.hash !== createHash('sha256').update(body).digest('hex')) throw new FetchError('invoice does not match your zap request', 422);
-  return pr;
+  // NIP-57 asks the wallet to commit the invoice to the zap request. Some (Primal) ignore it. The payer is
+  // protected by the amount check above; an unbound invoice only means the wallet may not publish a receipt.
+  return { pr, bound: inv.hash === createHash('sha256').update(body).digest('hex') };
 }
 
 /** True if `receipt` (kind 9735) is the wallet's receipt for zap request `reqId`. */
@@ -184,11 +199,11 @@ export function makeZaps({ cfg, ingest, store, get = getJson }) {
       const x = await info(recipient);
       const why = checkZapRequest(ev, { owner: cfg.owner, recipient, info: x });
       if (why) throw new FetchError(why, 400);
-      const pr = await zapInvoice(ev, x, get);
+      const { pr, bound } = await zapInvoice(ev, x, get);
       prune(pending, 30 * 60000);
       if (pending.size > 200) pending.clear();
       pending.set(ev.id, { at: Date.now(), p: recipient, relays: ev.tags.find((t) => t[0] === 'relays').slice(1), info: x, created: ev.created_at });
-      return { pr, sats: Number(ev.tags.find((t) => t[0] === 'amount')[1]) / 1000 };
+      return { pr, bound, sats: Number(ev.tags.find((t) => t[0] === 'amount')[1]) / 1000 };
     },
     async receipt(id) {
       const z = pending.get(id);

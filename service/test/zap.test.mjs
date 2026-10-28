@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { generateSecretKey, getPublicKey, finalizeEvent } from 'nostr-tools/pure';
-import { bech32Encode, bech32Decode, convertBits, encodeLnurl, parseBolt11, lnurlEndpoint, payInfo, checkZapRequest, zapInvoice, isReceiptFor, MAX_SATS } from '../src/zap.mjs';
+import { getJson, bech32Encode, bech32Decode, convertBits, encodeLnurl, parseBolt11, lnurlEndpoint, payInfo, checkZapRequest, zapInvoice, isReceiptFor, MAX_SATS } from '../src/zap.mjs';
 import { encodeQR } from '../src/qr.mjs';
 import { firstAccepted } from '../src/ingest.mjs';
 
@@ -64,12 +64,16 @@ test('zap requests and invoices are checked before money moves', async () => {
   const hash = createHash('sha256').update(JSON.stringify(ok)).digest('hex');
   let asked;
   const wallet = (pr) => async (u) => { asked = new URL(u); return { pr }; };
-  assert.match(await zapInvoice(ok, info, wallet(fakeInvoice('lnbc210n', hash))), /^lnbc210n1/);
+  const got = await zapInvoice(ok, info, wallet(fakeInvoice('lnbc210n', hash)));
+  assert.match(got.pr, /^lnbc210n1/); assert.equal(got.bound, true);
   assert.equal(asked.searchParams.get('amount'), '21000');
   assert.equal(JSON.parse(asked.searchParams.get('nostr')).id, ok.id);
   assert.equal(asked.searchParams.get('comment'), 'cheer up');
   await assert.rejects(zapInvoice(ok, info, wallet(fakeInvoice('lnbc1u', hash))), /amount does not match/);
-  await assert.rejects(zapInvoice(ok, info, wallet(fakeInvoice('lnbc210n', 'ef'.repeat(32)))), /does not match your zap request/);
+  // Primal-style wallets ignore the NIP-57 hash: allowed, flagged, amount still enforced.
+  const loose = await zapInvoice(ok, info, wallet(fakeInvoice('lnbc210n', 'ef'.repeat(32))));
+  assert.equal(loose.bound, false); assert.match(loose.pr, /^lnbc210n1/);
+  await assert.rejects(zapInvoice(ok, info, wallet(fakeInvoice('lnbc5u', 'ef'.repeat(32)))), /amount does not match/);
   await assert.rejects(zapInvoice(ok, info, wallet(fakeInvoice('lnbc', hash))), /amount does not match/);
 
   const receipt = finalizeEvent({ kind: 9735, created_at: now(), tags: [['p', friend], ['bolt11', 'x'], ['description', JSON.stringify(ok)]], content: '' }, walletSk);
@@ -105,4 +109,22 @@ test('publish answers on the first relay OK and leaves slow relays pending', asy
   assert.ok(Date.now() - t1 < 1000); assert.equal(none[0].pending, true);
   const allFail = await firstAccepted(['wss://a', 'wss://b'], () => Promise.resolve({ ok: false, message: 'blocked' }), 2000);
   assert.deepEqual(allFail.map((r) => r.message), ['blocked', 'blocked']);
+});
+
+test('wallet server errors are retried once and explained', async () => {
+  const seq = (...rs) => { let i = 0; const calls = []; const f = async (u) => { calls.push(u); const r = rs[Math.min(i++, rs.length - 1)]; if (r instanceof Error) throw r; return { status: r[0], body: Buffer.from(r[1]) }; }; f.calls = calls; return f; };
+  const U = 'https://pay.example/cb?amount=1';
+  let f = seq([500, 'oops'], [200, '{"pr":"lnbc1"}']);
+  assert.deepEqual(await getJson(U, 2, f), { pr: 'lnbc1' }); assert.equal(f.calls.length, 2, 'retried once after a 500');
+  f = seq([500, '{"status":"ERROR","reason":"node offline"}']);
+  await assert.rejects(getJson(U, 2, f), (e) => e.message === 'pay.example returned error 500: node offline' && e.status === 502);
+  assert.equal(f.calls.length, 2, 'only one retry');
+  f = seq([400, '{"status":"ERROR","reason":"amount too low"}']);
+  await assert.rejects(getJson(U, 2, f), (e) => /error 400: amount too low/.test(e.message) && e.status === 422);
+  assert.equal(f.calls.length, 1, 'client errors are not retried');
+  f = seq(Object.assign(new Error('socket hang up'), { status: 502 }), [200, '{"ok":1}']);
+  assert.deepEqual(await getJson(U, 2, f), { ok: 1 });
+  f = seq(Object.assign(new Error('private address'), { status: 403 }));
+  await assert.rejects(getJson(U, 2, f), /pay\.example did not answer \(private address\)/); assert.equal(f.calls.length, 1);
+  await assert.rejects(getJson(U, 2, seq([200, '<html>'])), /not JSON/);
 });

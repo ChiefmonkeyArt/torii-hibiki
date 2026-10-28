@@ -5,7 +5,7 @@
 ### Active tasks
 
 - **HIBIKI-P1-INSTALL (v0.2.3 done, ongoing checks):** the owner runs the install command on the VPS, signs in at `/hibiki/` with their NIP-07 signer and checks: the feed fills from the circle, images load with no third-party requests, a reply/reaction asks for confirmation then appears on the shared relay, and `systemctl status hibiki-feed` shows it under its memory cap.
-- **HIBIKI-ZAP-ACCEPT (v0.2.5):** the owner zaps a real post with a small amount, once with a WebLN wallet (Alby) and once by scanning the QR, and checks the bolt total updates. Some wallet servers hash the zap request differently; v0.2.5 refuses those invoices rather than pay an unchecked one, so note any wallet that fails.
+- **HIBIKI-ZAP-ACCEPT (v0.2.5):** the owner zaps a real post with a small amount, once with a WebLN wallet (Alby) and once by scanning the QR, and checks the bolt total updates. v0.2.6 accepts wallets that ignore the NIP-57 description hash (Primal) with the amount still checked; such zaps may not show as paid automatically. Note any wallet that fails, with the message shown.
 - **HIBIKI-P1-ACCEPT:** phone acceptance (warm load under 2 s, panel sheet, tap-to-play) and a week of real use to tune the default weights and spam features.
 - **HIBIKI-P4-RELAY-ADR (later):** a Torii Suite ADR for the additive relay write rule (accept 30382/30383 from bound service keys) before P4.
 

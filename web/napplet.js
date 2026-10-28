@@ -501,11 +501,12 @@
     }
     function invoice(r) {
       clear(box);
-      var st = h('p', { class: 'm', role: 'status' }, 'Waiting for payment\u2026');
+      var st = h('p', { class: 'm', role: 'status' }, r.bound === false ? 'Waiting for payment\u2026 This wallet may not confirm zaps, so close this once your wallet says paid.' : 'Waiting for payment\u2026');
       add(box, [head('Pay ' + r.sats.toLocaleString() + ' sats', 'Scan with any Lightning wallet'), r.qr ? qrSvg(r.qr) : null,
         h('div', { class: 'zrow c' }, btn('Open wallet', { class: 'btn p' }, function () { tell('feed.lightning', { pr: r.pr }); }),
           btn('Copy invoice', { class: 'btn' }, function () { rpc('feed.copy', { text: r.pr }).then(function () { toast('Invoice copied'); }, function () { inv.focus(); toast('Select the invoice text to copy it'); }); })),
-        h('input', { class: 'zin inv', readonly: true, value: r.pr, 'aria-label': 'Invoice', onfocus: function (e) { e.target.select(); } }), st]);
+        h('input', { class: 'zin inv', readonly: true, value: r.pr, 'aria-label': 'Invoice', onfocus: function (e) { e.target.select(); } }), st,
+        r.bound === false ? btn('Close', { class: 'btn' }, close) : null]);
       var inv = box.querySelector('.inv'), t0 = Date.now();
       (function poll() {
         if (!wrap.isConnected) return;

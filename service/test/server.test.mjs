@@ -176,9 +176,10 @@ test('profiles, duplicate replies and zaps over HTTP', async (t) => {
   assert.equal(r.status, 200); assert.equal(inv.sats, 21); assert.match(inv.pr, /^lnbc210n1/);
   assert.ok(Array.isArray(inv.qr) && inv.qr.length >= 21);
   assert.equal((await post(zr({ sk: friendSk }))).status, 422, 'only the owner can zap');
+  assert.equal(inv.bound, true);
   invoiceFor = 'ef'.repeat(32);
   r = await post(zr());
-  assert.equal(r.status, 422); assert.match((await r.json()).error, /does not match/);
+  assert.equal(r.status, 200); assert.equal((await r.json()).bound, false, 'unbound invoice allowed and flagged');
   assert.equal(asked.filter((u) => u.includes('lnurlp')).length, 1, 'pay info is cached');
 
   r = await fetch(`${base}/api/zap/receipt/${req.id}`, { headers: H });
