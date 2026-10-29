@@ -24,7 +24,7 @@ const html = read('web/index.html'), napHtml = read('web/napplet.html');
 const pkg = JSON.parse(read('package.json')), svcPkg = JSON.parse(read('service/package.json'));
 const lock = JSON.parse(read('service/package-lock.json'));
 const sh = read('install.sh');
-const WEB_JS = ['web/shell.js', 'web/napplet.js', 'web/rank.js'];
+const WEB_JS = ['web/shell.js', 'web/wallet.js', 'web/napplet.js', 'web/rank.js'];
 const WEB_ALL = [...WEB_JS, 'web/index.html', 'web/napplet.html', 'web/shell.css', 'web/napplet.css', 'web/hibiki.css'];
 const metaCsp = (s) => s.match(/Content-Security-Policy" content="([^"]+)"/)?.[1] || '';
 // <meta> CSP cannot carry frame-ancestors or sandbox; the header adds them.
@@ -111,7 +111,10 @@ t('fonts are bundled with their OFL licence', () => {
   for (const f of ['noto-sans-regular.woff2', 'noto-sans-bold.woff2', 'noto-serif-jp-mark.woff2', 'OFL.txt']) assert.ok(fs.existsSync(path.join(ROOT, 'web/fonts', f)), f);
   assert.match(read('web/fonts/OFL.txt'), /SIL OPEN FONT LICENSE/i);
 });
-t('size budgets (gzip): shell <= 8 KB, napplet <= 32 KB, fonts <= 64 KB', () => {
+t('size budgets (gzip): shell <= 8 KB, wallet <= 6 KB + lazy crypto <= 28 KB, napplet <= 32 KB, fonts <= 64 KB', () => {
+  const wal = gz('web/wallet.js'), crypto = gz('web/nwc.js');
+  console.log(`     wallet ${wal} B, wallet crypto (loaded on first use) ${crypto} B`);
+  assert.ok(wal <= 6 * 1024, `wallet ${wal}`); assert.ok(crypto <= 28 * 1024, `nwc ${crypto}`);
   const shell = ['web/index.html', 'web/shell.js', 'web/shell.css'].reduce((a, f) => a + gz(f), 0);
   const nap = ['web/napplet.html', 'web/napplet.js', 'web/rank.js', 'web/napplet.css', 'web/hibiki.css'].reduce((a, f) => a + gz(f), 0);
   const fonts = fs.readdirSync(path.join(ROOT, 'web/fonts')).filter((f) => f.endsWith('.woff2')).reduce((a, f) => a + fs.statSync(path.join(ROOT, 'web/fonts', f)).size, 0);
@@ -134,16 +137,56 @@ t('watch: preview frames are lazy and capped, the player keeps everything on scr
   assert.match(css, /\.modal>\.glass\.vm\{[^}]*height:calc\(100vh - 48px\)[^}]*overflow:hidden/, 'player fits the viewport on desktop');
   assert.match(css, /\.pb>\*\{flex-shrink:0\}/);
 });
-t('zaps: owner always confirms, shell checks every value the napplet sends', () => {
+t('zaps: owner confirms (or one-taps within their limits), shell checks every value the napplet sends', () => {
   const shell = read('web/shell.js'), nap = read('web/napplet.js');
   const z = shell.slice(shell.indexOf('function zap(d)'), shell.indexOf('var INVOICE'));
-  assert.ok(z && /return ask\(\{/.test(z), 'zap goes through the confirm dialog');
-  assert.ok(!/skip7|skip:/.test(z), 'the zap confirm can never be skipped');
+  const za = z.slice(z.indexOf('function zapAsk('));
+  assert.ok(za && /return ask\(\{/.test(za), 'a normal zap goes through the confirm dialog');
+  assert.ok(!/skip7|skip:/.test(z), 'the zap confirm has no skip flag');
+  assert.match(z, /if \(d\.one\) \{\s*if \(!wallet \|\| !wallet\.ready\(\)\) return Promise\.reject/, 'one-tap only with a connected wallet');
+  assert.match(z, /return zapAsk\(d, Math\.floor\(Number\(d\.sats\)\)\)/, 'otherwise the dialog');
   assert.match(z, /sats >= 1 && sats <= 1000000/); assert.match(z, /HEX\.test\(d\.pubkey/);
   assert.match(shell, /case 'feed\.lightning': if \(INVOICE\.test\(d\.pr/, 'only invoices open a wallet');
   assert.match(shell, /case 'feed\.copy':\s*if \(INVOICE\.test\(d\.text[^)]*\) \|\| \/\^npub1/, 'clipboard takes invoices or npubs only');
   assert.match(shell, /case 'feed\.author': if \(HEX\.test/); assert.match(shell, /case 'feed\.zapcheck': if \(HEX\.test/);
   assert.ok(!/webln|window\.nostr/.test(nap), 'the napplet never reaches a wallet or signer itself');
+});
+t('one-tap zaps: shell owns the secret, the amount, the limits and the Undo (ADR-0001 9.4)', () => {
+  const shell = read('web/shell.js'), nap = read('web/napplet.js'), w = read('web/wallet.js'), html = read('web/index.html');
+  assert.ok(!/walletconnect|secret|nip44|HibikiNWC/i.test(nap), 'the napplet never sees the wallet connection');
+  assert.ok(html.indexOf('src="wallet.js"') > 0 && html.indexOf('src="wallet.js"') < html.indexOf('src="shell.js"'), 'wallet.js loads before shell.js');
+  const one = w.slice(w.indexOf('function oneTap('), w.indexOf('// ---- settings dialog'));
+  assert.match(one, /sats = l\.tap/, 'amount comes from the shell\'s own settings, not the message');
+  assert.ok(!/d\.sats/.test(one), 'the napplet amount is ignored');
+  assert.match(one, /sats > l\.cap \|\| l\.spent \+ sats > l\.daily\) return fallback/, 'over a limit goes back to the dialog');
+  assert.match(one, /setTimeout\(res, 3000\)/, '3 second Undo window');
+  assert.ok(one.indexOf("wait.then") < one.indexOf("request('pay_invoice'"), 'pays only after the Undo window');
+  assert.match(one, /Date\.now\(\) - lastTap < 600/, 'tap rate limit');
+  assert.match(w, /var DEF = \{ tap: 21, cap: 1000, daily: 10000 \}/, 'owner-chosen defaults');
+  assert.match(w, /nip44\.encrypt\(x\.owner\(\), JSON\.stringify\(o\)\)/, 'record encrypted to the owner');
+  assert.match(w, /\['d', 'hibiki\/wallet'\]/);
+  assert.ok(!/localStorage/.test(w), 'no raw storage: secrets only via the shell store fallback or sessionStorage');
+  assert.match(w, /a\.pubkey !== W\.pk \|\| !L\.verify\(a\) \|\| !a\.tags\.some/, 'wallet answers are checked in the browser too');
+  assert.match(shell, /case 'feed\.wallet': if \(wallet\) wallet\.open\(\); break;/);
+  assert.match(shell, /send\('feed\.walletstate', s\)/); assert.match(nap, /m\.type === 'feed\.walletstate'/);
+  assert.match(sh, /web\/wallet\.js web\/nwc\.js/, 'installer preflight lists the wallet files');
+});
+t('wallet crypto bundle matches its source and pinned versions', () => {
+  const head = read('web/nwc.js').split('\n')[0];
+  assert.match(head, new RegExp(`nostr-tools ${lock.packages['node_modules/nostr-tools'].version.replace(/\./g, '\\.')} .*esbuild ${svcPkg.devDependencies.esbuild.replace(/\./g, '\\.')}`));
+  assert.match(svcPkg.devDependencies.esbuild, /^\d+\.\d+\.\d+$/, 'esbuild pinned exactly');
+  const r = cp.spawnSync(process.execPath, [path.join(ROOT, 'tools/build-nwc.mjs'), '--check'], { encoding: 'utf8' });
+  if (/Cannot find (package|module) 'esbuild'/.test(r.stderr)) { console.log('     (esbuild not installed; rebuild check skipped)'); return; }
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+t('columns: draggable, remembered divider, hidden on phones', () => {
+  const nap = read('web/napplet.js'), css = read('web/napplet.css'), shell = read('web/shell.js');
+  assert.match(nap, /role: 'separator', 'aria-orientation': 'vertical'/);
+  assert.match(nap, /ArrowLeft/); assert.match(nap, /dblclick/);
+  assert.match(nap, /tell\('feed\.pref', \{ split: S\.split \}\)/);
+  assert.match(shell, /d\.split >= 280 && d\.split <= 1600/, 'shell bounds the stored width');
+  assert.match(css, /calc\(100% - 400px\)/, 'the feed column keeps at least 400px');
+  assert.match(css, /max-width:860px\)\{\.split\{display:none\}/);
 });
 t('conversation: names open profiles, Reply opens a form under that comment', () => {
   const nap = read('web/napplet.js');

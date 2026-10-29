@@ -44,7 +44,7 @@ envval() { [[ -f "$2" ]] && sed -n "s/^$1=//p" "$2" | tail -n1 | tr -d "\"' \r" 
 [[ $EUID -eq 0 ]] || die "run with sudo"
 
 # ---- preflight -------------------------------------------------------------
-for f in VERSION web/index.html web/napplet.html web/napplet.js web/shell.js web/rank.js \
+for f in VERSION web/index.html web/napplet.html web/napplet.js web/shell.js web/rank.js web/wallet.js web/nwc.js \
          service/package.json service/package-lock.json service/src/server.mjs; do
   [[ -f "$SRC/$f" && ! -L "$SRC/$f" ]] || die "missing or symlinked $f"
 done

@@ -13,3 +13,16 @@ dialog{max-width:560px;width:calc(100% - 32px);padding:22px;color:var(--tx)}
 dialog::backdrop{background:rgba(5,8,14,.45);backdrop-filter:blur(4px)}
 dialog h2{margin:0 0 4px;font-size:18px}
 dialog pre{white-space:pre-wrap;word-break:break-word;max-height:40vh;overflow:auto;padding:12px 14px;border-radius:12px;background:var(--chip);font:13px/1.5 "Hibiki Sans",system-ui,sans-serif}
+.zin{width:100%;box-sizing:border-box;padding:9px 11px;border-radius:12px;border:1px solid var(--bd2);background:var(--chip);color:var(--tx);font:13px/1.4 "Hibiki Sans",system-ui,sans-serif}
+textarea.zin{resize:vertical;word-break:break-all;margin:6px 0 10px}
+.wlg{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.wl{display:grid;gap:4px;font-size:12.5px;color:var(--tx2)}
+@media(max-width:520px){.wlg{grid-template-columns:1fr}}
+.ztray{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:20;display:grid;gap:8px;width:min(420px,calc(100% - 24px));pointer-events:none}
+.zt{position:relative;overflow:hidden;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 14px;border-radius:14px;box-shadow:var(--sh);pointer-events:auto;font-weight:500;animation:ztin .18s ease-out}
+.zt i{position:absolute;left:0;bottom:0;height:3px;width:100%;background:#f7931a;transform-origin:left;animation:ztbar 3s linear forwards}
+.zt.ok{border-color:color-mix(in srgb,var(--ok) 50%,transparent)}.zt.bad{border-color:color-mix(in srgb,var(--warn) 60%,transparent)}
+.zt.out{opacity:0;transition:opacity .3s}
+@keyframes ztin{from{opacity:0;transform:translateY(8px)}}
+@keyframes ztbar{to{transform:scaleX(0)}}
+@media(prefers-reduced-motion:reduce){.zt,.zt i{animation:none}}

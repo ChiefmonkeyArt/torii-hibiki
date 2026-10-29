@@ -6,6 +6,7 @@
 
 - **HIBIKI-P1-INSTALL (v0.2.3 done, ongoing checks):** the owner runs the install command on the VPS, signs in at `/hibiki/` with their NIP-07 signer and checks: the feed fills from the circle, images load with no third-party requests, a reply/reaction asks for confirmation then appears on the shared relay, and `systemctl status hibiki-feed` shows it under its memory cap.
 - **HIBIKI-ZAP-ACCEPT (v0.2.5):** the owner zaps a real post with a small amount, once with a WebLN wallet (Alby) and once by scanning the QR, and checks the bolt total updates. v0.2.6 accepts wallets that ignore the NIP-57 description hash (Primal) with the amount still checked; such zaps may not show as paid automatically. Note any wallet that fails, with the message shown.
+- **HIBIKI-ONETAP-ACCEPT (v0.2.7):** connect an NWC wallet (Primal Wallet, Alby Hub or Alby Go, Zeus or Coinos; Wallet of Satoshi has no NWC) on Your signal, with the signer set to auto-sign kind 9734. Check: a tap zaps 21 sats after the 3 s toast, Undo cancels with nothing paid, a second device sees the wallet after sign-in, comment like and zap work, a zap past the daily total asks first, and the divider width survives a reload.
 - **HIBIKI-P1-ACCEPT:** phone acceptance (warm load under 2 s, panel sheet, tap-to-play) and a week of real use to tune the default weights and spam features.
 - **HIBIKI-P4-RELAY-ADR (later):** a Torii Suite ADR for the additive relay write rule (accept 30382/30383 from bound service keys) before P4.
 

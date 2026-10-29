@@ -6,7 +6,7 @@
   'use strict';
   var R = window.HibikiRank;
   var PROXY = /^\/hibiki\/(img|media)\/[\w-]{22}\//;
-  var S = { zapped: {}, prev: null, person: null, me: null, weights: null, section: 'today', data: {}, profiles: {}, quoted: {}, sel: null, tab: null, filter: 'all', q: '', shown: 30, liked: {}, reposted: {} };
+  var S = { zapped: {}, zapFx: {}, wallet: null, split: 0, prev: null, person: null, me: null, weights: null, section: 'today', data: {}, profiles: {}, quoted: {}, sel: null, tab: null, filter: 'all', q: '', shown: 30, liked: {}, reposted: {} };
 
   // ---------- DOM helpers ----------
   function h(tag, a) {
@@ -53,6 +53,7 @@
       if (m.type === 'feed.result') p[0](m.data); else p[1](Object.assign(new Error(m.data && m.data.message), m.data));
     } else if (m.type === 'feed.init') init(m.data);
     else if (m.type === 'feed.theme') document.documentElement.dataset.theme = m.data.theme;
+    else if (m.type === 'feed.walletstate') { var was = !!(S.wallet && S.wallet.connected); S.wallet = m.data; if (was !== !!m.data.connected && S.section === 'signal') render(); }
   });
 
   // ---------- formatting ----------
@@ -237,10 +238,28 @@
       extra || null);
   }
   function zapsOf(it) { return ((it.f && it.f.z) || 0) + (S.zapped[it.id] || 0); }
-  function zapAct(it, short) {
+  function zapAct(it, short, redraw) {
     var z = zapsOf(it);
     if (!prof(it.pubkey).zap || it.pubkey === (S.me && S.me.owner)) return z ? h('span', { class: 'm zt', title: 'Zapped' }, icon('bolt'), ' ' + fmt(z)) : null;
-    return act([icon('bolt'), z ? ' ' + fmt(z) : short ? '' : ' Zap'], { class: 'zb', 'aria-label': 'Zap ' + prof(it.pubkey).name, 'aria-pressed': S.zapped[it.id] ? 'true' : 'false', title: 'Zap' }, function () { zapSheet(it); });
+    var one = S.wallet && S.wallet.connected, held = false, timer = 0, fx = S.zapFx[it.id] && Date.now() - S.zapFx[it.id] < 900;
+    var b = act([icon('bolt'), z ? ' ' + fmt(z) : short ? '' : ' Zap'], { class: 'zb' + (fx ? ' zing' : ''), 'data-plus': fx ? '+' + fmt(S.wallet.tap) : null, 'aria-label': one ? 'Zap ' + prof(it.pubkey).name + ' ' + S.wallet.tap + ' sats (hold for more)' : 'Zap ' + prof(it.pubkey).name, 'aria-pressed': S.zapped[it.id] ? 'true' : 'false', title: one ? 'Tap to zap ' + S.wallet.tap + ' sats, hold to choose' : 'Zap' },
+      function () { if (held) { held = false; return; } if (one) oneTap(it, redraw || function () { patch(it); }); else zapSheet(it); });
+    // Hold (or right-click) for the amount sheet.
+    b.addEventListener('pointerdown', function () { held = false; clearTimeout(timer); timer = setTimeout(function () { held = true; zapSheet(it); }, 500); });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(function (t) { b.addEventListener(t, function () { clearTimeout(timer); }); });
+    b.addEventListener('contextmenu', function (e) { e.preventDefault(); clearTimeout(timer); zapSheet(it); });
+    return b;
+  }
+  // One tap: animate now, let the shell pay behind its 3 s Undo. The shell picks
+  // the amount and enforces the limits; a cancel or failure rolls back here.
+  function oneTap(it, redraw) {
+    var sats = S.wallet.tap;
+    S.zapped[it.id] = (S.zapped[it.id] || 0) + sats; S.zapFx[it.id] = Date.now(); redraw();
+    var undo = function () { S.zapped[it.id] = Math.max(0, (S.zapped[it.id] || 0) - sats); S.zapFx[it.id] = 0; redraw(); };
+    rpc('feed.zap', { pubkey: it.pubkey, id: it.id || null, kind: it.kind || null, name: prof(it.pubkey).name, one: true }, 300000).then(function (r) {
+      if (r.paid) { if (r.sats !== sats) { S.zapped[it.id] += r.sats - sats; redraw(); } return; }
+      undo(); if (r.pr) zapSheet(it, r); // over a limit and no wallet payment: pay by QR
+    }, function (e) { undo(); if (e.message === 'nowallet') zapSheet(it); });
   }
   function replyRow(r) {
     var pop = (r.likes || 0) + (r.reposts || 0);
@@ -273,9 +292,24 @@
   }
 
   // ---------- actions (each goes through the shell's confirm + sign) ----------
-  function like(it) {
-    rpc('feed.propose', { kind: 7, content: '+', tags: [['e', it.id], ['p', it.pubkey], ['k', String(it.kind)]], title: 'Like this post?', preview: '\u2665 ' + prof(it.pubkey).name + ': ' + it.content.slice(0, 160) })
-      .then(function () { S.liked[it.id] = 1; patch(it); toast('Liked'); }, quiet);
+  // Likes show at once when the owner has turned off "Ask before liking".
+  function like(it, redraw) {
+    redraw = redraw || function () { patch(it); };
+    var fast = !S.askLikes;
+    if (fast) { S.liked[it.id] = 1; redraw(); }
+    rpc('feed.propose', { kind: 7, content: '+', tags: [['e', it.id], ['p', it.pubkey], ['k', String(it.kind || 1)]], title: 'Like this post?', preview: '\u2665 ' + prof(it.pubkey).name + ': ' + String(it.content || '').slice(0, 160) })
+      .then(function () { if (!fast) { S.liked[it.id] = 1; redraw(); toast('Liked'); } }, function (e) { if (fast) { delete S.liked[it.id]; redraw(); } quiet(e); });
+  }
+  // Like and zap for a reply in the side panel; redraws only itself.
+  function cActs(r) {
+    var x = { id: r.id, pubkey: r.pubkey, kind: r.kind || 1, content: r.content || '', f: { ge: r.likes || 0, z: r.zaps || 0 }, me: r.me };
+    var box = h('span', { class: 'cacts' });
+    function draw() {
+      clear(box);
+      var liked = mine(x, 'l'), n = x.f.ge + (S.liked[x.id] && !(x.me && x.me.l) ? 1 : 0);
+      add(box, [act([icon('heart'), n ? fmt(n) : ''], { 'aria-pressed': liked ? 'true' : 'false', 'aria-label': liked ? 'Liked' : 'Like' }, function () { if (!liked) like(x, draw); }), zapAct(x, true, draw)]);
+    }
+    draw(); return box;
   }
   function repost(it) {
     rpc('feed.propose', { kind: 6, content: '', tags: [['e', it.id], ['p', it.pubkey]], title: 'Repost to your followers?', preview: prof(it.pubkey).name + ': ' + it.content.slice(0, 200) })
@@ -423,7 +457,7 @@
       all.forEach(function (r) { ids[r.id] = 1; });
       all.forEach(function (r) { if (r.parent && r.parent !== it.id && ids[r.parent]) (kids[r.parent] = kids[r.parent] || []).push(r); else top.push(r); });
       function row(r, depth) {
-        var pop = (r.likes || 0) + (r.reposts || 0), el;
+        var el;
         var replyBtn = btn('Reply', { class: 'more rbtn' }, function () {
           if (inline && inline.isConnected) { var same = inline._for === r.id; inline.remove(); inline = null; if (same) return; }
           inline = composer(it, r, posted(r), true); inline._for = r.id;
@@ -433,7 +467,7 @@
         el = h('div', { class: depth ? 'ind' : '', 'data-rid': r.id }, h('div', { class: 'thr' + (r.mine ? ' mine' : '') }, avatar(r.pubkey, 'sm'), h('div', { style: 'min-width:0' }, who(r.pubkey), ' ', r.circle ? h('span', { class: 'tag f' }, r.mine ? 'you' : 'circle') : null, ' ', h('span', { class: 'm' }, ago(r.created_at)),
           h('div', { class: 'txt', style: 'font-size:13.5px;margin:2px 0 0' }, richText(r.content, true)),
           (r.media || []).filter(function (m) { return m.type === 'image'; }).map(function (m) { return h('div', { class: 'ig n1g' }, h('img', { src: m.src, alt: m.alt || '', loading: 'lazy' })); }),
-          h('div', { class: 'm', style: 'margin-top:4px' }, replyBtn, pop ? ' \u00B7 \u2665 ' + fmt(pop) : '', r.dup > 1 ? ' \u00B7 posted ' + r.dup + ' times' : ''))));
+          h('div', { class: 'm cra' }, replyBtn, r.mine || String(r.id).indexOf('local') === 0 ? null : cActs(r), r.dup > 1 ? ' \u00B7 posted ' + r.dup + ' times' : ''))));
         if (depth < 4) (kids[r.id] || []).forEach(function (k) { el.appendChild(row(k, depth + 1)); });
         return el;
       }
@@ -465,7 +499,7 @@
     v.appendChild(bg); v.appendChild(pa);
     return v;
   }
-  function zapSheet(it) {
+  function zapSheet(it, ready) {
     var pk = it.pubkey, name = prof(pk).name, amt = S.zapAmt || 1000;
     var box = h('div', { class: 'glass zbox' });
     var wrap = h('div', { class: 'modal zs', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Zap ' + name }, box);
@@ -485,7 +519,8 @@
       custom.addEventListener('input', function () { var v = Math.floor(Number(custom.value)); if (v >= 1 && v <= 1e6) { amt = v; sync(); } });
       note.addEventListener('keydown', function (e) { if (e.key === 'Enter') go.click(); });
       add(box, [head('Zap ' + name, it.id ? 'For this post' : 'Straight to them'), h('div', { class: 'seg zam', role: 'group', 'aria-label': 'Amount in sats' }, chips), h('div', { class: 'zrow' }, custom, h('span', { class: 'm' }, 'sats')), note, go,
-        h('p', { class: 'm' }, 'Paid from your own Lightning wallet. You confirm the amount before anything is signed.')]);
+        h('p', { class: 'm' }, S.wallet && S.wallet.connected ? 'Paid from your connected wallet after you confirm. A tap on the bolt zaps ' + S.wallet.tap + ' sats.' : 'Paid from your own Lightning wallet. You confirm the amount before anything is signed.'),
+        S.wallet && S.wallet.connected ? null : btn('Connect a wallet for one-tap zaps', { class: 'more', style: 'text-align:left' }, function () { close(); tell('feed.wallet'); })]);
       sync();
     }
     function send(sats, comment) {
@@ -501,7 +536,7 @@
     }
     function invoice(r) {
       clear(box);
-      var st = h('p', { class: 'm', role: 'status' }, r.bound === false ? 'Waiting for payment\u2026 This wallet may not confirm zaps, so close this once your wallet says paid.' : 'Waiting for payment\u2026');
+      var st = h('p', { class: 'm', role: 'status' }, r.walletError ? 'Your connected wallet did not pay (' + r.walletError + '). You can pay this invoice another way.' : r.bound === false ? 'Waiting for payment\u2026 This wallet may not confirm zaps, so close this once your wallet says paid.' : 'Waiting for payment\u2026');
       add(box, [head('Pay ' + r.sats.toLocaleString() + ' sats', 'Scan with any Lightning wallet'), r.qr ? qrSvg(r.qr) : null,
         h('div', { class: 'zrow c' }, btn('Open wallet', { class: 'btn p' }, function () { tell('feed.lightning', { pr: r.pr }); }),
           btn('Copy invoice', { class: 'btn' }, function () { rpc('feed.copy', { text: r.pr }).then(function () { toast('Invoice copied'); }, function () { inv.focus(); toast('Select the invoice text to copy it'); }); })),
@@ -519,7 +554,7 @@
       clear(box); add(box, [h('div', { class: 'zdone' }, icon('bolt'), h('b', {}, sats.toLocaleString() + ' sats sent'), h('p', { class: 'm' }, 'Zapped ' + name + '.')), btn('Close', { class: 'btn' }, close)]);
       setTimeout(close, 2500);
     }
-    pick();
+    if (ready) invoice(ready); else pick();
   }
 
   // ---------- profile page ----------
@@ -534,7 +569,7 @@
     var posts = h('div', { class: 'feed' });
     var feed = h('div', { class: 'feed' }, head, posts);
     panelEl = h('aside', { class: 'glass panel', 'aria-label': 'Details' });
-    pg.appendChild(h('div', { class: 'lay' }, feed, panelEl));
+    pg.appendChild(lay(feed, panelEl));
     renderPanel();
     function tagEl(t, c) { return h('span', { class: 'tag' + (c ? ' ' + c : '') }, t); }
     function draw(d, final) {
@@ -672,6 +707,28 @@
     });
   }
   function ranked(items) { return R.rerank(items || [], S.weights); }
+  // Two columns with a draggable, remembered divider (hidden on phones).
+  function setSplit(px) { S.split = px; if (px) document.documentElement.style.setProperty('--pw', px + 'px'); else document.documentElement.style.removeProperty('--pw'); }
+  function lay(a, b) {
+    var sp = h('div', { class: 'split', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize columns', tabindex: '0', title: 'Drag to resize. Double-click to reset.' }, h('i'));
+    var el = h('div', { class: 'lay' }, a, b, sp);
+    var save = function () { tell('feed.pref', { split: S.split }); };
+    var set = function (px) { var w = el.getBoundingClientRect().width; setSplit(Math.round(Math.max(300, Math.min(px, w - 400)))); sp.setAttribute('aria-valuenow', String(S.split)); };
+    sp.addEventListener('pointerdown', function (e) {
+      e.preventDefault(); sp.setPointerCapture(e.pointerId); el.classList.add('drag');
+      var mv = function (ev) { set(el.getBoundingClientRect().right - ev.clientX - 9); };
+      var up = function () { sp.removeEventListener('pointermove', mv); sp.removeEventListener('pointerup', up); sp.removeEventListener('pointercancel', up); el.classList.remove('drag'); save(); };
+      sp.addEventListener('pointermove', mv); sp.addEventListener('pointerup', up); sp.addEventListener('pointercancel', up);
+    });
+    sp.addEventListener('dblclick', function () { setSplit(0); save(); });
+    sp.addEventListener('keydown', function (e) {
+      var cur = b.getBoundingClientRect().width, k = e.key;
+      if (k === 'ArrowLeft' || k === 'ArrowRight') { e.preventDefault(); set(cur + (k === 'ArrowLeft' ? 32 : -32)); save(); }
+      else if (k === 'Home' || k === 'End') { e.preventDefault(); set(k === 'Home' ? 1e4 : 0); save(); }
+      else if (k === 'Enter') { e.preventDefault(); setSplit(0); save(); }
+    });
+    return el;
+  }
   function sec(title, meta) { return h('div', { class: 'sec' }, h('h2', {}, title), meta ? h('span', { class: 'm' }, meta) : null); }
   function signalPill() {
     var w = R.weights(S.weights), label = w.fresh > 0.7 ? 'Lively' : w.fresh < 0.3 ? 'Calm' : w.explore > 0.6 ? 'Explorer' : 'Balanced';
@@ -708,7 +765,7 @@
     if (all.length > S.shown) feed.appendChild(btn('Show more', { class: 'btn', style: 'align-self:center' }, function () { S.shown += 30; render(); }));
     if (!all.length) feed.appendChild(h('div', { class: 'glass empty' }, S.q ? 'Nothing loaded matches that.' : 'No original posts yet. Your node checks for new ones every few minutes.'));
     panelEl = h('aside', { class: 'glass panel', 'aria-label': 'Details' });
-    pg.appendChild(h('div', { class: 'lay' }, feed, panelEl));
+    pg.appendChild(lay(feed, panelEl));
     renderPanel();
   }
 
@@ -732,7 +789,7 @@
     panelEl = h('aside', { class: 'glass panel', 'aria-label': 'Story' });
     panelEl._empty = side;
     if (S.sel && !S.sel.story) S.sel = null;
-    pg.appendChild(h('div', { class: 'lay' }, main, panelEl));
+    pg.appendChild(lay(main, panelEl));
     renderPanel();
   }
   function poster(it) { var m = it.media.find(function (x) { return x.thumb; }) || it.media.find(function (x) { return x.type === 'image'; }); return m ? (m.thumb || m.src) : null; }
@@ -829,6 +886,8 @@
         h('div', { class: 'glass card', style: 'padding:20px' }, h('p', { class: 's', style: 'margin:0 0 6px' }, 'These settings live only in this browser. Your node gathers public posts; the ranking happens here and is never published.'), presets, sliders),
         sec('Preview', 'Top of Circle with these settings'), preview),
       h('aside', { class: 'side' }, sec('This week'), stats, sec('Loudest voices'), voices,
+        sec('Wallet'), h('div', { class: 'glass card' }, h('p', { class: 's', style: 'margin:0' }, S.wallet && S.wallet.connected ? 'Connected. A tap on the bolt zaps ' + S.wallet.tap + ' sats with a 3 second Undo. Up to ' + fmt(S.wallet.cap) + ' sats a zap and ' + fmt(S.wallet.daily) + ' a day without asking (' + fmt(S.wallet.spent) + ' today).' : 'Connect a Nostr Wallet Connect wallet to zap in one tap. Until then, each zap shows an invoice or uses your browser wallet.'),
+          h('div', { class: 'row' }, h('span', { class: 'm' }, S.wallet && S.wallet.where === 'browser' ? 'Saved in this browser' : S.wallet && S.wallet.connected ? 'Saved encrypted to your npub' : ''), btn(S.wallet && S.wallet.connected ? 'Wallet settings' : 'Connect wallet', { class: 'btn sm' + (S.wallet && S.wallet.connected ? '' : ' p') }, function () { tell('feed.wallet'); }))),
         sec('Appearance'), h('div', { class: 'glass card' }, h('div', { class: 'row' }, h('span', {}, 'Theme'), h('span', { class: 'seg' }, ['light', 'dark', 'auto'].map(function (t) { return btn(t[0].toUpperCase() + t.slice(1), { 'aria-pressed': (t === theme) ? 'true' : 'false' }, function () { tell('feed.settheme', { theme: t }); setTimeout(render, 50); }); }))),
           h('div', { class: 'row' }, h('span', {}, 'Ask before liking'), h('span', { class: 'seg' }, [[true, 'On'], [false, 'Off']].map(function (o) { return btn(o[1], { 'aria-pressed': S.askLikes === o[0] ? 'true' : 'false' }, function () { S.askLikes = o[0]; tell('feed.pref', { askLikes: o[0] }); render(); }); }))),
           h('div', { class: 'row' }, h('span', { class: 'm' }, 'Hibiki v' + (S.version || '')), btn('Sign out', { class: 'btn sm' }, function () { tell('feed.logout'); }))))));
@@ -870,7 +929,7 @@
 
   var started = false;
   function init(d) {
-    S.me = d.me; S.weights = R.weights(d.tune || R.DEFAULTS); S.version = d.version || (d.me && d.me.version); S.askLikes = d.askLikes !== false;
+    S.me = d.me; S.weights = R.weights(d.tune || R.DEFAULTS); S.version = d.version || (d.me && d.me.version); S.askLikes = d.askLikes !== false; if (d.wallet) S.wallet = d.wallet; setSplit(d.split || 0);
     document.documentElement.dataset.theme = d.theme || 'light';
     if (!d.me || !d.me.signedIn) return;
     if (S.me.profile) S.profiles[S.me.owner] = S.me.profile;

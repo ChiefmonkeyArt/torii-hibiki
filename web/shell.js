@@ -104,31 +104,52 @@
       .then(function (ev) { return call('publish', { method: 'POST', body: JSON.stringify(ev) }); });
   }
   // Zap (NIP-57): the node looks up the wallet and checks the invoice; the
-  // owner confirms the amount here (never skippable), signs the zap request,
-  // then pays from a browser wallet (WebLN) or scans the invoice.
+  // shell signs the zap request and pays. A normal zap always shows the
+  // confirm dialog. A one-tap zap (ADR-0001 9.4) skips it only within the
+  // owner's own limits, and only behind the shell's 3 s Undo toast; the
+  // amount is the shell's own tap amount, never the napplet's.
   var HEX = /^[0-9a-f]{64}$/;
-  function zap(d) {
-    var sats = Math.floor(Number(d.sats)), comment = String(d.comment || '').slice(0, 280), req = null;
-    if (!HEX.test(d.pubkey || '') || (d.id && !HEX.test(d.id)) || !(sats >= 1 && sats <= 1000000)) return Promise.reject(new Error('bad zap'));
+  var wallet = window.HibikiWallet ? window.HibikiWallet({ call: call, store: store, sign: sign, owner: function () { return me && me.owner; }, push: function (s) { send('feed.walletstate', s); } }) : null;
+  function zapInfo(d, sats) {
     return call('zap/info/' + d.pubkey).then(function (info) {
       if (sats < info.min || sats > info.max) throw new Error('their wallet takes ' + info.min.toLocaleString() + ' to ' + info.max.toLocaleString() + ' sats');
-      return ask({ title: 'Zap ' + sats.toLocaleString() + ' sats?', body: (comment ? comment + '\n\n' : '') + 'To ' + String(d.name || 'this person').slice(0, 60) + ' at ' + info.address + '.', meta: sats.toLocaleString() + ' sats · real bitcoin', sub: 'This pays from your own Lightning wallet. Your signer signs the zap request first; nothing is paid until your wallet confirms.', yes: 'Zap ' + sats.toLocaleString() + ' sats' })
-        .then(function () {
-          var tags = [['relays'].concat(info.relays), ['amount', String(sats * 1000)], ['lnurl', info.lnurl], ['p', d.pubkey]];
-          if (d.id) { tags.push(['e', d.id]); if (d.kind) tags.push(['k', String(d.kind)]); }
-          return sign(9734, tags, comment);
-        });
-    }).then(function (ev) { req = ev.id; return call('zap/invoice', { method: 'POST', body: JSON.stringify(ev) }); })
-      .then(function (inv) {
-        var out = { pr: inv.pr, qr: inv.qr, sats: sats, req: req, bound: inv.bound !== false };
-        if (!window.webln) return out;
-        return Promise.resolve(window.webln.enable()).then(function () { return window.webln.sendPayment(inv.pr); })
-          .then(function () { return { paid: true, sats: sats, req: req }; }, function () { return out; });
-      });
+      return info;
+    });
+  }
+  function zapInvoice(d, info, sats, comment) {
+    var tags = [['relays'].concat(info.relays), ['amount', String(sats * 1000)], ['lnurl', info.lnurl], ['p', d.pubkey]];
+    if (d.id) { tags.push(['e', d.id]); if (d.kind) tags.push(['k', String(d.kind)]); }
+    return Promise.resolve(sign(9734, tags, comment)).then(function (ev) {
+      return call('zap/invoice', { method: 'POST', body: JSON.stringify(ev) }).then(function (inv) { return { pr: inv.pr, qr: inv.qr, bound: inv.bound !== false, req: ev.id }; });
+    });
+  }
+  function zap(d) {
+    if (!HEX.test(d.pubkey || '') || (d.id && !HEX.test(d.id))) return Promise.reject(new Error('bad zap'));
+    if (d.one) {
+      if (!wallet || !wallet.ready()) return Promise.reject(new Error('nowallet'));
+      return wallet.oneTap(d, function (sats) { return zapInfo(d, sats).then(function (info) { return zapInvoice(d, info, sats, ''); }); },
+        function (sats) { return zapAsk(d, sats); });
+    }
+    return zapAsk(d, Math.floor(Number(d.sats)));
+  }
+  function zapAsk(d, sats) {
+    var comment = String(d.comment || '').slice(0, 280);
+    if (!(sats >= 1 && sats <= 1000000)) return Promise.reject(new Error('bad zap'));
+    var nwc = wallet && wallet.ready();
+    return zapInfo(d, sats).then(function (info) {
+      return ask({ title: 'Zap ' + sats.toLocaleString() + ' sats?', body: (comment ? comment + '\n\n' : '') + 'To ' + String(d.name || 'this person').slice(0, 60) + ' at ' + info.address + '.', meta: sats.toLocaleString() + ' sats · real bitcoin', sub: nwc ? 'This pays from your connected wallet. Your signer signs the zap request first.' : 'This pays from your own Lightning wallet. Your signer signs the zap request first; nothing is paid until your wallet confirms.', yes: 'Zap ' + sats.toLocaleString() + ' sats' })
+        .then(function () { return zapInvoice(d, info, sats, comment); });
+    }).then(function (inv) {
+      var out = { pr: inv.pr, qr: inv.qr, sats: sats, req: inv.req, bound: inv.bound };
+      var paid = function () { return { paid: true, sats: sats, req: inv.req }; };
+      if (nwc) return wallet.pay(inv.pr).then(paid, function (e) { out.walletError = e.message; return out; });
+      if (!window.webln) return out;
+      return Promise.resolve(window.webln.enable()).then(function () { return window.webln.sendPayment(inv.pr); }).then(paid, function () { return out; });
+    });
   }
   var INVOICE = /^lnbc[0-9a-z]{20,2000}$/;
 
-  function init() { send('feed.init', { me: me, theme: theme(), tune: store.get('tune', null), onboarded: store.get('onboarded', false), askLikes: !store.get('skip7', false), version: me && me.version }); }
+  function init() { send('feed.init', { me: me, theme: theme(), tune: store.get('tune', null), onboarded: store.get('onboarded', false), askLikes: !store.get('skip7', false), split: store.get('split', 0), wallet: wallet && wallet.state(), version: me && me.version }); }
   var KINDS = { 1: 1, 6: 1, 7: 1, 10000: 1, 30004: 1, 30078: 1 };
   function onMessage(e) {
     if (e.source !== frame.contentWindow || !e.data || typeof e.data.type !== 'string') return;
@@ -153,7 +174,11 @@
       case 'feed.status': reply(m.id, call('health')); break;
       case 'feed.sync': reply(m.id, call('sync', { method: 'POST' })); break;
       case 'feed.tune': store.set('tune', d.weights || null); break;
-      case 'feed.pref': if (typeof d.askLikes === 'boolean') store.set('skip7', !d.askLikes); break;
+      case 'feed.pref':
+        if (typeof d.askLikes === 'boolean') store.set('skip7', !d.askLikes);
+        if (d.split === 0 || (d.split >= 280 && d.split <= 1600)) store.set('split', Math.round(d.split));
+        break;
+      case 'feed.wallet': if (wallet) wallet.open(); break;
       case 'feed.onboarded': store.set('onboarded', true); break;
       case 'feed.settheme': store.set('theme', d.theme === 'dark' || d.theme === 'light' ? d.theme : 'auto'); send('feed.theme', { theme: theme() }); break;
       case 'feed.propose':
@@ -173,6 +198,7 @@
       me = j;
       if (!j.signedIn) return showGate();
       gate.hidden = true; frame.hidden = false;
+      if (wallet) wallet.init();
       if (ready) init();
     }).catch(function (e) { gate.hidden = false; note('Your node did not answer (' + e.message + '). Try again in a moment.'); });
   }
