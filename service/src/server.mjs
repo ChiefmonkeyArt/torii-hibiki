@@ -16,6 +16,7 @@ import { makeIngest } from './ingest.mjs';
 import { makeFeed } from './feed.mjs';
 import { verifyNip98, checkPublish } from './auth.mjs';
 import { FetchError } from './safefetch.mjs';
+import { makeNwc } from './nwc.mjs';
 import { makeZaps } from './zap.mjs';
 import { encodeQR } from './qr.mjs';
 
@@ -35,6 +36,7 @@ export function createApp(cfg, deps = {}) {
   const ingest = deps.ingest || makeIngest({ cfg, store, log });
   const feed = makeFeed({ cfg, store, ingest, signer });
   const zaps = makeZaps({ cfg, ingest, store, get: deps.zapGet });
+  const nwc = makeNwc({ transport: ingest.nwcTransport });
   const seen = new Map();
   const loginTries = new Map();
   const B = cfg.basePath;
@@ -104,6 +106,19 @@ export function createApp(cfg, deps = {}) {
     if ((m = /^zap\/info\/([0-9a-f]{64})$/.exec(route))) {
       try { return json(res, 200, await zaps.describe(m[1])); }
       catch (e) { log('zap info', m[1].slice(0, 8), e.message); return json(res, e.status && e.status < 500 ? 422 : 502, { error: e.message }); }
+    }
+    // Wallet Connect: the browser's encrypted wallet record, and the relay hop to the wallet.
+    if (route === 'wallet') {
+      if (q.get('live') === '1') await ingest.fetchWallet().catch((e) => log('wallet fetch', e.message));
+      const ev = store.getReplaceable(30078, cfg.owner, 'hibiki/wallet');
+      return json(res, 200, { event: ev && ev.content ? ev : null });
+    }
+    if ((route === 'nwc/info' || route === 'nwc/request') && post) {
+      try {
+        const b = await body(req, 32 * 1024);
+        if (route === 'nwc/info') return json(res, 200, await nwc.info(b?.relays, b?.pk));
+        return json(res, 200, { event: await nwc.request(b?.relays, b?.ev) });
+      } catch (e) { log('nwc', e.message); return json(res, e.status === 504 || e.status === 429 ? e.status : e.status && e.status < 500 ? 422 : 502, { error: e.message }); }
     }
     if (route === 'zap/invoice' && post) {
       try {

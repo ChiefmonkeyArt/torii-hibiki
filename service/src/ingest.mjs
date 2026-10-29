@@ -189,9 +189,29 @@ export function makeIngest({ cfg, store, log = () => {} }) {
     return out;
   }
 
+  // Wallet Connect transport: live subscription opened before the request is
+  // sent (answers are ephemeral and never stored by relays). Nothing is kept.
+  const nwcTransport = {
+    listen(relays, filter, onEvent, onReady) {
+      let ready = false;
+      const fire = () => { if (!ready) { ready = true; onReady(); } };
+      const t = setTimeout(fire, 2500);
+      const sub = pool.subscription(relays, [filter]).subscribe({
+        next: (m) => { if (m === 'EOSE') fire(); else if (m && typeof m === 'object' && m.kind) onEvent(m); },
+        error: (e) => { log('nwc sub', e?.message); fire(); },
+      });
+      return () => { clearTimeout(t); sub.unsubscribe(); };
+    },
+    send: (relays, ev) => pool.publish(relays, ev, { timeout: 8000 }).catch((e) => log('nwc send', e?.message)),
+    query: (relays, filters, ms) => req(relays, filters, ms),
+  };
+  async function fetchWallet() {
+    keep(await req([primary, ...graph.ownerRelays, ...cfg.indexRelays].slice(0, 10), [{ kinds: [30078], authors: [cfg.owner], '#d': ['hibiki/wallet'] }], 5000));
+  }
+
   let timer = null;
   return {
-    graph, state, tick, fetchThread, fetchEvent, fetchAuthor, fetchProfile, query, publish,
+    graph, state, tick, fetchThread, fetchEvent, fetchAuthor, fetchProfile, fetchWallet, query, publish, nwcTransport,
     start() { tick(); timer = setInterval(tick, cfg.syncMinutes * 60000); timer.unref?.(); },
     stop() { clearInterval(timer); },
   };

@@ -28,6 +28,8 @@ async function boot(deps = {}) {
     async publish(ev) { published.push(ev); return [{ relay: 'ws://127.0.0.1:7777', ok: true, message: '' }]; },
     async fetchAuthor(pk) { ingest.authorAsked = pk; }, async fetchProfile(pk) { return store.getReplaceable(0, pk); },
     async query() { return ingest.queryResult || []; },
+    async fetchWallet() { ingest.walletAsked = (ingest.walletAsked || 0) + 1; },
+    nwcTransport: { listen: (r, f, on, ready) => { ingest.nwcSub = { f, on }; setTimeout(ready, 1); return () => {}; }, send: (r, ev) => { ingest.nwcSent = ev; }, async query() { return ingest.nwcInfo || []; } },
   };
   const app = createApp(cfg, { db, store, ingest, log: () => {}, ...deps });
   await new Promise((r) => app.server.listen(0, '127.0.0.1', r));
@@ -189,4 +191,39 @@ test('profiles, duplicate replies and zaps over HTTP', async (t) => {
   assert.deepEqual(await r.json(), { paid: true });
   r = await fetch(`${base}/api/zap/receipt/${'00'.repeat(32)}`, { headers: H });
   assert.equal((await r.json()).unknown, true);
+});
+
+test('wallet record and wallet connect relay hop', async (t) => {
+  const { app, store, base, dir, ingest } = await boot();
+  t.after(() => { app.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  let r = await fetch(`${base}/api/wallet`);
+  assert.equal(r.status, 401, 'owner only');
+  const cookie = await login(base), H = { cookie, 'x-hibiki': '1', 'content-type': 'application/json' };
+  r = await fetch(`${base}/api/wallet?live=1`, { headers: { cookie } });
+  assert.deepEqual(await r.json(), { event: null }); assert.equal(ingest.walletAsked, 1);
+  const rec = finalizeEvent({ kind: 30078, created_at: now() - 10, tags: [['d', 'hibiki/wallet']], content: 'ciphertext-only' }, ownerSk);
+  store.add(rec);
+  r = await fetch(`${base}/api/wallet`, { headers: { cookie } });
+  assert.equal((await r.json()).event.id, rec.id);
+  store.add(finalizeEvent({ kind: 30078, created_at: now(), tags: [['d', 'hibiki/wallet']], content: '' }, ownerSk));
+  r = await fetch(`${base}/api/wallet`, { headers: { cookie } });
+  assert.deepEqual(await r.json(), { event: null }, 'disconnect clears it');
+
+  const conn = generateSecretKey(), wSk = generateSecretKey(), wpk = getPublicKey(wSk);
+  r = await fetch(`${base}/api/nwc/info`, { method: 'POST', headers: H, body: JSON.stringify({ relays: ['wss://127.0.0.1'], pk: wpk }) });
+  assert.equal(r.status, 422, 'private relay refused');
+  ingest.nwcInfo = [finalizeEvent({ kind: 13194, created_at: now(), tags: [['encryption', 'nip44_v2']], content: 'pay_invoice' }, wSk)];
+  r = await fetch(`${base}/api/nwc/info`, { method: 'POST', headers: H, body: JSON.stringify({ relays: ['wss://relay.example.com'], pk: wpk }) });
+  assert.deepEqual(await r.json(), { found: true, methods: ['pay_invoice'], encryption: ['nip44_v2'] });
+  const req = finalizeEvent({ kind: 23194, created_at: now(), tags: [['p', wpk]], content: 'sealed' }, conn);
+  const p = fetch(`${base}/api/nwc/request`, { method: 'POST', headers: H, body: JSON.stringify({ relays: ['wss://relay.example.com'], ev: req }) });
+  while (!ingest.nwcSent) await new Promise((x) => setTimeout(x, 5));
+  assert.equal(ingest.nwcSent.id, req.id);
+  const ans = finalizeEvent({ kind: 23195, created_at: now(), tags: [['e', req.id], ['p', req.pubkey]], content: 'sealed-answer' }, wSk);
+  ingest.nwcSub.on(ans);
+  r = await p; assert.equal(r.status, 200); assert.equal((await r.json()).event.id, ans.id);
+  r = await fetch(`${base}/api/nwc/request`, { method: 'POST', headers: H, body: JSON.stringify({ relays: ['wss://relay.example.com'], ev: { ...req, content: 'changed' } }) });
+  assert.equal(r.status, 422);
+  r = await fetch(`${base}/api/nwc/request`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({}) });
+  assert.ok(r.status >= 400, 'needs the CSRF header');
 });
