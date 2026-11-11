@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { generateSecretKey, getPublicKey, finalizeEvent } from 'nostr-tools/pure';
 import { EventStore } from 'applesauce-core';
-import { NativeSqliteEventDatabase } from 'applesauce-sqlite/native';
+import { HibikiEventDatabase } from '../src/eventdb.mjs';
 import { createApp, VERSION } from '../src/server.mjs';
 import { loadConfig } from '../src/config.mjs';
 import { createHash } from 'node:crypto';
@@ -18,7 +18,7 @@ const now = () => Math.floor(Date.now() / 1000);
 async function boot(deps = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hibiki-'));
   const cfg = loadConfig({ HIBIKI_OWNER: owner, HIBIKI_SECRET: 'cd'.repeat(32), HIBIKI_DATA: dir, HIBIKI_ORIGIN: 'https://node.example' });
-  const db = new NativeSqliteEventDatabase(':memory:');
+  const db = new HibikiEventDatabase(':memory:');
   const store = new EventStore({ database: db });
   const published = [];
   const ingest = {
