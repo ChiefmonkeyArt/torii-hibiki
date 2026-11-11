@@ -1,8 +1,9 @@
 // compact.mjs — one-off (and safe to re-run) cleanup of the node's event store
 // (ADR-0003). Removes replaced versions of replaceable and addressable events,
 // and any tag rows whose event is gone, then VACUUMs. Nothing else is dropped.
-// Steps: measure -> nothing to do? stop -> check free disk -> backup with
-// VACUUM INTO and check it -> delete in one transaction -> VACUUM -> report.
+// Steps: drop v0.2.8 backups -> measure -> nothing to do? stop -> check free
+// disk -> delete in one transaction -> VACUUM -> report. No backup is taken:
+// the store is a cache of relay events and refills itself (ADR-0003, v0.2.9).
 // Run with the service stopped (install.sh does this):
 //   node src/compact.mjs /var/lib/hibiki/events.db
 // GPL-3.0-or-later.
@@ -48,8 +49,27 @@ export function measure(db) {
  * Compact the event store at `file`. Returns a report; throws only on a real
  * failure (the database is left as it was by the transaction / VACUUM).
  */
-export function compact(file, { backupDir = path.join(path.dirname(file), 'backups'), log = console.log, minFreeSlack = 256 * MB, keepBackups = 1, freeSpace = freeBytes, now = new Date() } = {}) {
-  if (!fs.existsSync(file)) { log('compact: no event store yet, nothing to do'); return { done: false, reason: 'missing' }; }
+/** v0.2.8 kept a pre-compaction copy in <data>/backups; the store is a cache, so drop it. */
+export function dropBackups(dir, log = console.log) {
+  const bdir = path.join(dir, 'backups');
+  let names; try { names = fs.readdirSync(bdir); } catch { return 0; }
+  let freed = 0;
+  for (const f of names.filter((x) => /^events-\d{8}T\d{6}Z\.db(-journal|-wal|-shm)?$/.test(x))) {
+    const p = path.join(bdir, f);
+    freed += fs.statSync(p).size; fs.rmSync(p, { force: true });
+  }
+  try { fs.rmdirSync(bdir); } catch { /* not empty: something else lives there, leave it */ }
+  if (freed) log(`compact: removed old backups, ${fmt(freed)} freed`);
+  return freed;
+}
+
+/**
+ * Compact the event store at `file`. Returns a report; throws only on a real
+ * failure (the delete is one transaction; VACUUM is atomic).
+ */
+export function compact(file, { log = console.log, minFreeSlack = 256 * MB, freeSpace = freeBytes } = {}) {
+  const dropped = dropBackups(path.dirname(file), log);
+  if (!fs.existsSync(file)) { log('compact: no event store yet, nothing to do'); return { done: false, reason: 'missing', dropped }; }
   const before = { bytes: size(file), free: freeSpace(path.dirname(file)) };
   const db = new DatabaseSync(file);
   try {
@@ -57,27 +77,12 @@ export function compact(file, { backupDir = path.join(path.dirname(file), 'backu
     const m = measure(db);
     Object.assign(before, { events: m.events, tags: m.tags });
     log(`compact: ${fmt(before.bytes)}, ${m.events} events, ${m.tags} tag rows, ${fmt(before.free)} free; replaced versions ${m.stale} (${m.staleTags} tag rows) ${JSON.stringify(m.byKind)}, orphan tag rows ${m.orphanTags}, free pages ${fmt(m.freePages)}`);
-    if (!m.stale && !m.orphanTags && m.freePages < 32 * MB) { log('compact: nothing to do'); return { done: false, reason: 'clean', before }; }
-    // Backup + VACUUM's temporary copy + rollback journal, each at most the file size.
-    const need = before.bytes * 3 + minFreeSlack;
+    if (!m.stale && !m.orphanTags && m.freePages < 32 * MB) { log('compact: nothing to do'); return { done: false, reason: 'clean', before, dropped }; }
+    // VACUUM's temporary copy + rollback journal, each at most the file size.
+    const need = before.bytes * 2 + minFreeSlack;
     if (before.free < need) {
       log(`compact: skipped, needs ${fmt(need)} free and only ${fmt(before.free)} is available; nothing changed`);
-      return { done: false, reason: 'disk', before, need };
-    }
-    fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
-    const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-    const backup = path.join(backupDir, `events-${stamp}.db`);
-    db.exec(`VACUUM INTO '${backup.replace(/'/g, "''")}'`);
-    fs.chmodSync(backup, 0o600);
-    const chk = new DatabaseSync(backup, { readOnly: true });
-    try {
-      const ok = one(chk, 'PRAGMA quick_check'), n = one(chk, 'SELECT count(*) FROM events');
-      if (ok !== 'ok' || n !== m.events) throw new Error(`backup check failed (${ok}, ${n} of ${m.events} events)`);
-    } finally { chk.close(); }
-    log(`compact: backup ${backup} (${fmt(size(backup))}) checked`);
-    for (const old of fs.readdirSync(backupDir).filter((f) => /^events-\d{8}T\d{6}Z\.db$/.test(f)).sort().reverse().slice(keepBackups)) {
-      fs.rmSync(path.join(backupDir, old), { force: true });
-      log(`compact: removed older backup ${old}`);
+      return { done: false, reason: 'disk', before, need, dropped };
     }
     db.exec('BEGIN IMMEDIATE');
     let staleTags, orphanTags, stale;
@@ -92,11 +97,11 @@ export function compact(file, { backupDir = path.join(path.dirname(file), 'backu
     const after = { bytes: size(file), free: freeSpace(path.dirname(file)), events: one(db, 'SELECT count(*) FROM events'), tags: one(db, 'SELECT count(*) FROM event_tags') };
     log(`compact: removed ${stale} replaced versions ${JSON.stringify(m.byKind)}, ${staleTags} of their tag rows and ${orphanTags} orphan tag rows`);
     log(`compact: ${fmt(before.bytes)} -> ${fmt(after.bytes)}; events ${before.events} -> ${after.events}; tag rows ${before.tags} -> ${after.tags}; free ${fmt(before.free)} -> ${fmt(after.free)}`);
-    return { done: true, before, after, removed: { events: stale, byKind: m.byKind, tags: staleTags, orphanTags }, backup };
+    return { done: true, before, after, removed: { events: stale, byKind: m.byKind, tags: staleTags, orphanTags }, dropped };
   } finally { db.close(); }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   const file = process.argv[2] || path.join(process.env.HIBIKI_DATA || '/var/lib/hibiki', 'events.db');
-  try { compact(file); } catch (e) { console.error(`compact: failed: ${e.message} (any backup taken is in the backups folder)`); process.exit(1); }
+  try { compact(file); } catch (e) { console.error(`compact: failed: ${e.message}`); process.exit(1); }
 }

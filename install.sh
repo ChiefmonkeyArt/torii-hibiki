@@ -12,7 +12,7 @@
 # validates with `nginx -t`, flips /apps/hibiki/current, restarts the service and
 # health-checks it, rolling everything back on failure. Before the flip it stops
 # the service and compacts the event store (service/src/compact.mjs, ADR-0003:
-# backup first, free-disk check, safe to re-run). Then registers the Torii Base
+# free-disk check, no backup: the store is a relay cache; safe to re-run). Then registers the Torii Base
 # launcher card and keeps the current release plus one spare. It touches nothing outside
 # /apps/hibiki, /etc/hibiki, /var/lib/hibiki, its unit and its nginx fragment.
 set -euo pipefail
@@ -254,7 +254,7 @@ if ! nginx -t >/dev/null 2>&1; then nginx -t || true; rollback "nginx -t failed"
 
 # ---- compact the event store (ADR-0003) ---------------------------------------
 # Removes replaced versions of replaceable/addressable events left by v0.2.7 and
-# earlier, with a checked backup in ${DATA_DIR}/backups first. Needs the service
+# earlier, and the v0.2.8 backup copy in ${DATA_DIR}/backups. Needs the service
 # stopped; a no-op once clean. A failure is logged and the deploy carries on.
 if [[ -f "${DATA_DIR}/events.db" ]]; then
   systemctl stop "$UNIT" 2>/dev/null || true
