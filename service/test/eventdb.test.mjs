@@ -97,7 +97,7 @@ function legacyStore(file) {
   db.close();
 }
 
-test('compaction removes only replaced versions and orphan tags, backs up first, and is safe to re-run', () => {
+test('compaction removes only replaced versions and orphan tags, takes no backup, and is safe to re-run', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hcompact-')), file = path.join(dir, 'events.db');
   try {
     legacyStore(file);
@@ -113,29 +113,34 @@ test('compaction removes only replaced versions and orphan tags, backs up first,
     assert.deepEqual(kinds, [[0, 1], [1, 4], [3, 2], [30023, 2]], 'one per slot, all regular notes kept');
     assert.equal(db.prepare('SELECT created_at FROM events WHERE kind = 3 AND pubkey = (SELECT pubkey FROM events WHERE kind = 0)').get().created_at, 500, 'the newest follow list stays');
     db.close();
-    const bk = new DatabaseSync(r.backup, { readOnly: true });
-    assert.equal(Object.values(bk.prepare('SELECT count(*) FROM events').get())[0], r.before.events, 'backup holds the original');
-    bk.close();
+    assert.deepEqual(fs.readdirSync(dir).sort(), ['events.db'], 'no backup or temp files left');
     assert.ok(lines.some((l) => /removed 7 replaced versions/.test(l)) && lines.some((l) => /->/.test(l)), 'logs counts and sizes');
     assert.equal(compact(file, { log }).reason, 'clean', 're-run does nothing');
-    assert.equal(fs.readdirSync(path.join(dir, 'backups')).length, 1, 'one backup');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('compaction refuses to start without enough free disk, and keeps only the newest backup', () => {
+test('compaction refuses to start without enough free disk, and drops v0.2.8 backups', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hcompact-')), file = path.join(dir, 'events.db');
   try {
     legacyStore(file);
     const before = fs.readFileSync(file);
-    assert.equal(compact(file, { log: () => {}, freeSpace: () => 1024 }).reason, 'disk');
+    const low = compact(file, { log: () => {}, freeSpace: () => 1024 });
+    assert.equal(low.reason, 'disk');
+    assert.ok(low.need >= low.before.bytes * 2, 'needs room for VACUUM and the journal');
     assert.ok(before.equals(fs.readFileSync(file)), 'nothing changed');
-    assert.ok(!fs.existsSync(path.join(dir, 'backups')), 'no backup taken');
-    fs.mkdirSync(path.join(dir, 'backups'));
-    fs.writeFileSync(path.join(dir, 'backups', 'events-20200101T000000Z.db'), 'old');
-    fs.writeFileSync(path.join(dir, 'backups', 'keep-me.txt'), 'not ours');
-    compact(file, { log: () => {}, now: new Date('2026-11-11T12:00:00Z') });
-    assert.deepEqual(fs.readdirSync(path.join(dir, 'backups')).sort(), ['events-20261111T120000Z.db', 'keep-me.txt']);
-    assert.equal(fs.statSync(path.join(dir, 'backups', 'events-20261111T120000Z.db')).mode & 0o777, 0o600);
+    const b = path.join(dir, 'backups');
+    fs.mkdirSync(b);
+    fs.writeFileSync(path.join(b, 'events-20261111T154634Z.db'), 'x'.repeat(1000));
+    fs.writeFileSync(path.join(b, 'events-20261111T154634Z.db-journal'), 'y');
+    const lines = [];
+    assert.equal(compact(file, { log: (l) => lines.push(l) }).dropped, 1001);
+    assert.ok(!fs.existsSync(b), 'empty backups folder removed');
+    assert.ok(lines.some((l) => /removed old backups/.test(l)));
+    fs.mkdirSync(b);
+    fs.writeFileSync(path.join(b, 'events-20200101T000000Z.db'), 'old');
+    fs.writeFileSync(path.join(b, 'keep-me.txt'), 'not ours');
+    assert.equal(compact(file, { log: () => {} }).reason, 'clean', 'backups go even when the store is already clean');
+    assert.deepEqual(fs.readdirSync(b), ['keep-me.txt'], 'other files are left alone');
     const db = new DatabaseSync(file); const m = measure(db); db.close();
     assert.equal(m.stale + m.orphanTags, 0);
     assert.equal(compact(path.join(dir, 'missing.db'), { log: () => {} }).reason, 'missing');
