@@ -10,8 +10,10 @@
 # upgrades), installs the hibiki-feed systemd unit (unprivileged user, loopback
 # only, memory-capped), writes the nginx fragment (fragment-first contract),
 # validates with `nginx -t`, flips /apps/hibiki/current, restarts the service and
-# health-checks it, rolling everything back on failure. Then registers the Torii
-# Base launcher card and keeps the newest 5 releases. It touches nothing outside
+# health-checks it, rolling everything back on failure. Before the flip it stops
+# the service and compacts the event store (service/src/compact.mjs, ADR-0003:
+# backup first, free-disk check, safe to re-run). Then registers the Torii Base
+# launcher card and keeps the current release plus one spare. It touches nothing outside
 # /apps/hibiki, /etc/hibiki, /var/lib/hibiki, its unit and its nginx fragment.
 set -euo pipefail
 umask 022
@@ -32,7 +34,7 @@ SVC_USER="hibiki"
 UNIT="hibiki-feed"
 UNIT_FILE="/etc/systemd/system/${UNIT}.service"
 PORT=8795
-KEEP_RELEASES=5
+KEEP_RELEASES=2
 SUITE_ENV="${SUITE_ENV:-/opt/torii-suite/checkout/.env}"
 CONTINUUM_CFG="${CONTINUUM_CFG:-${TORII_ROOT}/continuum-agent/config.yaml}"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,7 +47,7 @@ envval() { [[ -f "$2" ]] && sed -n "s/^$1=//p" "$2" | tail -n1 | tr -d "\"' \r" 
 
 # ---- preflight -------------------------------------------------------------
 for f in VERSION web/index.html web/napplet.html web/napplet.js web/shell.js web/rank.js web/wallet.js web/nwc.js \
-         service/package.json service/package-lock.json service/src/server.mjs; do
+         service/package.json service/package-lock.json service/src/server.mjs service/src/eventdb.mjs service/src/compact.mjs; do
   [[ -f "$SRC/$f" && ! -L "$SRC/$f" ]] || die "missing or symlinked $f"
 done
 VERSION="$(head -c 32 "$SRC/VERSION" | tr -d '[:space:]')"
@@ -249,6 +251,19 @@ rollback() {
 }
 
 if ! nginx -t >/dev/null 2>&1; then nginx -t || true; rollback "nginx -t failed"; fi
+
+# ---- compact the event store (ADR-0003) ---------------------------------------
+# Removes replaced versions of replaceable/addressable events left by v0.2.7 and
+# earlier, with a checked backup in ${DATA_DIR}/backups first. Needs the service
+# stopped; a no-op once clean. A failure is logged and the deploy carries on.
+if [[ -f "${DATA_DIR}/events.db" ]]; then
+  systemctl stop "$UNIT" 2>/dev/null || true
+  log "compacting event store"
+  if ! runuser -u "$SVC_USER" -- env SQLITE_TMPDIR="$DATA_DIR" timeout 1200 "$NODE" --disable-warning=ExperimentalWarning \
+       "$RELEASE_DIR/service/src/compact.mjs" "${DATA_DIR}/events.db" 2>&1 | sed 's/^/==> /'; then
+    log "warning: event store compaction failed; continuing with the store as it is"
+  fi
+fi
 
 # ---- flip, start, health-check -----------------------------------------------
 ln -sfn "$RELEASE_DIR" "${CURRENT_LINK}.new" && mv -Tf "${CURRENT_LINK}.new" "$CURRENT_LINK"

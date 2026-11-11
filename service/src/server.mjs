@@ -6,7 +6,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { EventStore } from 'applesauce-core';
-import { NativeSqliteEventDatabase } from 'applesauce-sqlite/native';
+import { HibikiEventDatabase } from './eventdb.mjs';
 import { loadConfig } from './config.mjs';
 import { makeSigner } from './signer.mjs';
 import { makeCache } from './imgcache.mjs';
@@ -25,7 +25,7 @@ export const VERSION = fs.readFileSync(new URL('../../VERSION', import.meta.url)
 export function createApp(cfg, deps = {}) {
   const log = deps.log || ((...a) => console.log(new Date().toISOString(), ...a));
   fs.mkdirSync(cfg.dataDir, { recursive: true, mode: 0o700 });
-  const db = deps.db || new NativeSqliteEventDatabase(path.join(cfg.dataDir, 'events.db'));
+  const db = deps.db || new HibikiEventDatabase(path.join(cfg.dataDir, 'events.db'));
   const store = deps.store || new EventStore({ database: db });
   const signer = makeSigner(cfg.secret, cfg.basePath);
   const cache = makeCache(path.join(cfg.dataDir, 'cache'), cfg.imgCacheBytes);

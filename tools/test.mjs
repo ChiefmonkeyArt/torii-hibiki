@@ -236,7 +236,20 @@ t('installer: preflight, fragment-first, nginx -t and health-check rollback', ()
   assert.ok(frag > 0 && test > frag && flip > test && reg > flip, 'fragment, nginx -t, flip, then register');
   assert.match(sh, /rollback "\$\{UNIT\} did not report v\$\{VERSION\}"/);
   assert.match(sh, /NPM" ci --omit=dev --ignore-scripts/);
-  assert.match(sh, /KEEP_RELEASES=5/);
+  assert.match(sh, /KEEP_RELEASES=2\n/, 'current release plus one spare (ADR-0003)');
+  assert.match(sh, /\[\[ "\$RELEASES\/\$d" == "\$CUR" \]\] \|\| rm -rf/, 'never removes the live release');
+});
+t('installer: compacts the event store with the service stopped, before the flip (ADR-0003)', () => {
+  const test = sh.indexOf('if ! nginx -t'), stop = sh.indexOf('systemctl stop "$UNIT"'), run = sh.indexOf('service/src/compact.mjs" "${DATA_DIR}/events.db"'), flip = sh.lastIndexOf('mv -Tf "${CURRENT_LINK}.new" "$CURRENT_LINK"\nsystemctl');
+  assert.ok(test > 0 && stop > test && run > stop && flip > run, 'nginx -t, stop, compact, then flip');
+  assert.match(sh, /runuser -u "\$SVC_USER" -- env SQLITE_TMPDIR="\$DATA_DIR"/, 'runs as the service user, temp files on the data disk');
+  assert.match(sh, /warning: event store compaction failed; continuing/, 'a failed compaction does not break the deploy');
+  for (const f of ['service/src/eventdb.mjs', 'service/src/compact.mjs']) assert.ok(sh.includes(f), `preflight lists ${f}`);
+});
+t('feed service keeps one version per replaceable slot (ADR-0003)', () => {
+  const srv = read('service/src/server.mjs');
+  assert.match(srv, /new HibikiEventDatabase\(/); assert.ok(!/new NativeSqliteEventDatabase\(/.test(srv));
+  assert.ok(fs.existsSync(path.join(ROOT, 'docs/adr/0003-event-store-replacement.md')), 'ADR-0003');
 });
 t('installer: image backend falls back from sharp to libvips on CPUs without x86-64-v2', () => {
   const probe = sh.indexOf("import('sharp')"), apt = sh.indexOf('apt-get install -y -qq --no-install-recommends libvips-tools'), flip = sh.indexOf('if ! nginx -t');
