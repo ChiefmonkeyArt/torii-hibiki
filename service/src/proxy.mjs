@@ -83,6 +83,8 @@ export function makeProxies({ signer, cache, imager, log = () => {} }) {
   function signed(o) {
     // unent here too, so previews cached before the Latin-1 names were added also read right.
     for (const k of ['title', 'description', 'site']) if (typeof o[k] === 'string' && o[k].includes('&')) o[k] = unent(o[k]);
+    // Titles are tidied when served, so previews cached earlier read the same.
+    if (o.title) o.title = cleanTitle(o.title, o.site, o.url);
     return { ...o, image: o.image ? signer.img(o.image, 640) : null, icon: o.icon ? signer.img(o.icon, 96) : null };
   }
 
@@ -100,6 +102,21 @@ export function ytId(u) {
 }
 
 const clip = (s, n) => unent(String(s || '')).replace(/\s+/g, ' ').trim().slice(0, n);
+
+const SEP = /\s+[|\u00b7\u2022\u2013\u2014-]\s+|\s*::\s*/;
+const norm = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]/g, '');
+/** "Headline - Site", "Site | Headline", "| Headline": keep the headline. Never returns less than the site name. */
+export function cleanTitle(title, site, url) {
+  const t = String(title || '').replace(/^[\s|\u00b7\u2022:\u2013\u2014-]+|[\s|\u00b7\u2022:\u2013\u2014-]+$/g, '');
+  let host = ''; try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
+  const names = [norm(site), norm(host), norm(host.split('.').slice(-2).join('.')), norm(host.split('.').slice(-2, -1)[0])].filter((n) => n.length >= 3);
+  // An ending may be the site plus a word ("CEASE report"); a leading part must be the site exactly.
+  const isSite = (seg, loose) => { const n = norm(seg); return n.length >= 3 && seg.split(/\s+/).length <= 4 && names.some((x) => n === x || (loose && n.startsWith(x) && n.length - x.length <= 8)); };
+  const parts = t.split(SEP);
+  while (parts.length > 1 && isSite(parts[parts.length - 1], true)) parts.pop();
+  while (parts.length > 1 && isSite(parts[0], false)) parts.shift();
+  return parts.join(' - ').trim() || t;
+}
 
 export function parseOg(html, base) {
   const head = html.slice(0, 200000);
@@ -139,6 +156,8 @@ export function parseOg(html, base) {
     ld,
     published: clip(meta['article:published_time'] || meta['og:article:published_time'] || '', 40) || null,
     price: !!(meta['product:price:amount'] || meta['og:price:amount']),
+    // Shop pages often say og:type article (WordPress default); many cart buttons give them away.
+    cart: (html.slice(0, 600000).match(/add[ _-]to[ _-](cart|basket|bag)\b/gi) || []).length >= 3,
     icon,
     url: base,
     site: clip(meta['og:site_name'] || new URL(base).hostname.replace(/^www\./, ''), 60),

@@ -1,6 +1,6 @@
 # ADR-0005: News link quality — read shared links in the background, show articles only, lead with one story
 
-- **Status:** Accepted (2026-11-12; shipped in v0.2.12; amended in v0.2.13)
+- **Status:** Accepted (2026-11-12; shipped in v0.2.12; amended in v0.2.13 and v0.2.14)
 - **Applies to:** the News section, the "In the news" rows on Today, the "Shared videos" grid on Watch, and the node's link preview proxy.
 - **Relates to:** ADR-0001 (personalised discovery; section 9 product focus and TL;DR summaries), ADR-0004 (lean event store).
 
@@ -42,3 +42,8 @@ The "Later" items shipped:
 - **Sort and topic chips:** Top, Latest, Most discussed, and hashtags shared by two or more stories (generic tags such as "uncategorized" are dropped).
 - **Read state and "N new since your last visit".** These and the settings are kept by the shell in the browser's local storage only, checked and bounded on save (100 sites per list, 300 read ids). Nothing is sent to the node.
 - **HTML entities:** Latin-1 names (for example `&ouml;`) and double-encoded names are decoded in titles, also for previews already in the cache.
+
+## Amendment (v0.2.14, 2026-11-12)
+
+- **Cart buttons mean a shop.** Some shop pages say `og:type` article (a WordPress default). A page with 3 or more "Add to cart", "Add to basket" or "Add to bag" buttons, or whose summary contains the phrase, is classified `shop` before any article rule. The summary check covers previews already cached.
+- **Titles are tidied when served** (`cleanTitle` in `proxy.mjs`), so cached previews are covered too and nothing is re-read. Stray separators at either end go. A trailing part (after " | ", " - ", " – ", " — ", " · " or "::") is dropped when it is the site name or domain, or the site name plus a short word ("CEASE report"). A leading part is dropped only when it is exactly the site name. A title that is only the site name is kept.
