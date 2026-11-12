@@ -1,6 +1,6 @@
 # ADR-0005: News link quality — read shared links in the background, show articles only, lead with one story
 
-- **Status:** Accepted (2026-11-12; shipped in v0.2.12)
+- **Status:** Accepted (2026-11-12; shipped in v0.2.12; amended in v0.2.13)
 - **Applies to:** the News section, the "In the news" rows on Today, the "Shared videos" grid on Watch, and the node's link preview proxy.
 - **Relates to:** ADR-0001 (personalised discovery; section 9 product focus and TL;DR summaries), ADR-0004 (lean event store).
 
@@ -31,10 +31,14 @@ On the development copy this gave 60 "stories". Many were not news: YouTube vide
 - A few real articles on sites without article markup may be missed; a few landing pages will get through. The host lists are the place to fix both.
 - No new data is stored on disk beyond the existing link cache.
 
-## Later (v0.2.13)
+## Amendment (v0.2.13, 2026-11-12)
 
-- Group the same event across outlets ("3 outlets").
-- Owner settings: "Follows only", "Hide this site" and a trusted-site boost.
-- "+3 more" under the best comment opens all comments.
-- Sort chips (Top, Latest, Most discussed) and hashtag topic chips.
-- Read state and "New since last visit", kept in the browser only.
+The "Later" items shipped:
+
+- **One event, many outlets.** Titled article stories from different domains fold into the most-shared one when their headlines share at least 3 meaningful words covering half or more of the shorter headline (`headWords`, `sameEvent` in `feed.mjs`). The card shows "N outlets"; the panel lists "Also covered by". Sharers, comments and topics merge.
+- **Ranking caps by domain**, not display name (`rerank` with `by: 'domain'`), so two sites with the same name are capped apart.
+- **Owner settings:** "Follows only", "Hide <domain>" and "Trust <domain>". A trusted site adds a fixed +0.5 rank part labelled "A site you trust".
+- **"+N more"** under the best comment opens all comments; up to 8 are kept per story.
+- **Sort and topic chips:** Top, Latest, Most discussed, and hashtags shared by two or more stories (generic tags such as "uncategorized" are dropped).
+- **Read state and "N new since your last visit".** These and the settings are kept by the shell in the browser's local storage only, checked and bounded on save (100 sites per list, 300 read ids). Nothing is sent to the node.
+- **HTML entities:** Latin-1 names (for example `&ouml;`) and double-encoded names are decoded in titles, also for previews already in the cache.

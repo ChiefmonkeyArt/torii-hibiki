@@ -6,9 +6,14 @@
 // TextRank-style method). Output is plain text only.
 
 const ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", '#39': "'", nbsp: ' ', mdash: '\u2014', ndash: '\u2013', hellip: '\u2026', rsquo: '\u2019', lsquo: '\u2018', rdquo: '\u201d', ldquo: '\u201c' };
-export const unent = (s) => s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e) => {
+// Latin-1 names (U+00A0..U+00FF in order), so "Steuererh&ouml;hungen" reads right.
+const L1 = 'nbsp iexcl cent pound curren yen brvbar sect uml copy ordf laquo not shy reg macr deg plusmn sup2 sup3 acute micro para middot cedil sup1 ordm raquo frac14 frac12 frac34 iquest Agrave Aacute Acirc Atilde Auml Aring AElig Ccedil Egrave Eacute Ecirc Euml Igrave Iacute Icirc Iuml ETH Ntilde Ograve Oacute Ocirc Otilde Ouml times Oslash Ugrave Uacute Ucirc Uuml Yacute THORN szlig agrave aacute acirc atilde auml aring aelig ccedil egrave eacute ecirc euml igrave iacute icirc iuml eth ntilde ograve oacute ocirc otilde ouml divide oslash ugrave uacute ucirc uuml yacute thorn yuml'.split(' ');
+L1.forEach((n, i) => { if (!(n in ENT)) ENT[n] = String.fromCharCode(0xa0 + i); });
+Object.assign(ENT, { euro: '\u20ac', trade: '\u2122', bull: '\u2022', sbquo: '\u201a', bdquo: '\u201e' });
+// Sites that encode twice ("&amp;ouml;") are unwrapped once first.
+export const unent = (s) => s.replace(/&amp;(#?\w+;)/gi, '&$1').replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e) => {
   if (e[0] === '#') { const n = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : Number(e.slice(1)); return n > 0 && n < 0x110000 ? String.fromCodePoint(n) : ''; }
-  return ENT[e.toLowerCase()] ?? m;
+  return ENT[e] ?? ENT[e.toLowerCase()] ?? m;
 });
 const squash = (s) => unent(s.replace(/<[^>]*>/g, ' ')).replace(/\s*\[\s*(\d+|[a-z]|citation needed|note \d+)\s*\]/gi, '').replace(/\s+([,.;:!?])/g, '$1').replace(/\s+/g, ' ').trim();
 

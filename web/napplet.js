@@ -8,6 +8,10 @@
   var PROXY = /^\/hibiki\/(img|media)\/[\w-]{22}\//;
   var S = { zapped: {}, zapFx: {}, wallet: null, split: 0, prev: null, person: null, me: null, weights: null, section: 'today', data: {}, profiles: {}, quoted: {}, sel: null, tab: null, filter: 'all', q: '', shown: 30, liked: {}, reposted: {} };
 
+  // Values the section files read and set (ADR-0006).
+  var V = { pg: null, panel: null };
+  S.news = { followsOnly: false, sort: 'top', hidden: [], trusted: [], read: [], seen: 0 }; S.newsSince = 0;
+
   // ---------- DOM helpers ----------
   function h(tag, a) {
     var el = document.createElement(tag), i, k, v;
@@ -332,10 +336,10 @@
       el.replaceWith(fresh);
     });
     document.querySelectorAll('.vc[data-id="' + it.id + '"]').forEach(function (el) { var m = el.querySelector('.mini'); if (m) m.replaceWith(miniActs(it, el._open)); });
-    var pa = panelEl && S.sel === it && panelEl.querySelector('.pacts');
+    var pa = V.panel && S.sel === it && V.panel.querySelector('.pacts');
     if (pa) pa.replaceWith(panelActs(it));
   }
-  function panelActs(it) { var r = actsRow(it, function () { var t = panelEl.querySelector('.cmp:not(.inl) textarea'); if (t) t.focus(); }); r.classList.add('pacts'); return r; }
+  function panelActs(it) { var r = actsRow(it, function () { var t = V.panel.querySelector('.cmp:not(.inl) textarea'); if (t) t.focus(); }); r.classList.add('pacts'); return r; }
   function mine(it, k) { return !!((k === 'l' ? S.liked : S.reposted)[it.id] || (it.me && it.me[k])); }
   function quiet(e) { if (e && e.message !== 'cancelled') toast('Not sent: ' + e.message); }
 
@@ -349,27 +353,26 @@
     var el = document.querySelector('[data-id="' + it.id + '"]'); if (el) el.classList.add('sel');
     renderPanel();
   }
-  var panelEl = null;
   function closePanel() { if (inModal) return closeModal(); S.sel = null; document.querySelectorAll('.n1.sel,.card.sel').forEach(function (n) { n.classList.remove('sel'); }); renderPanel(); }
   function renderPanel() {
-    if (!panelEl) return;
-    clear(panelEl);
+    if (!V.panel) return;
+    clear(V.panel);
     var it = S.sel;
     if (!it) {
-      panelEl.classList.remove('open');
-      add(panelEl, panelEl._empty ? panelEl._empty() : h('div', { class: 'pempty' }, h('div', { class: 'k', style: 'font-size:34px;color:var(--a)' }, '\u97FF'), h('p', {}, 'Pick a post to see its photos, link and every reply here.')));
+      V.panel.classList.remove('open');
+      add(V.panel, V.panel._empty ? V.panel._empty() : h('div', { class: 'pempty' }, h('div', { class: 'k', style: 'font-size:34px;color:var(--a)' }, '\u97FF'), h('p', {}, 'Pick a post to see its photos, link and every reply here.')));
       return;
     }
-    panelEl.classList.add('open');
-    add(panelEl, h('div', { class: 'ptabs' }, avatar(it.pubkey, 'xs'), it.story ? h('b', { style: 'font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, it.sharers.length > 1 ? 'Shared by ' + it.sharers.length + ' people' : 'Shared by ' + prof(it.pubkey).name) : who(it.pubkey, 'font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'),
+    V.panel.classList.add('open');
+    add(V.panel, h('div', { class: 'ptabs' }, avatar(it.pubkey, 'xs'), it.story ? h('b', { style: 'font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, it.sharers.length > 1 ? 'Shared by ' + it.sharers.length + ' people' : 'Shared by ' + prof(it.pubkey).name) : who(it.pubkey, 'font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'),
       h('span', { class: 'm', style: 'margin-left:6px;white-space:nowrap' }, ago(it.created_at)),
       btn('\u2715', { class: 'more', 'aria-label': 'Close panel', style: 'margin-left:auto;color:var(--tx3)' }, closePanel)));
     var pb = h('div', { class: 'pb' });
-    panelEl.appendChild(pb);
+    V.panel.appendChild(pb);
     if (it.story) return storyPanel(pb, it);
     var imgs = it.media.filter(function (m) { return m.type === 'image'; });
     if (plain(it.content)) pb.appendChild(h('div', { class: 'txt ptxt' }, richText(it.content, true)));
-    if (panelEl._acts) pb.appendChild(panelActs(it));
+    if (V.panel._acts) pb.appendChild(panelActs(it));
     if (imgs.length) mediaPanel(pb, it, imgs);
     else if (it.links.length) pb.appendChild(linkSummary(it.links[0]));
     repliesPanel(pb, it);
@@ -404,10 +407,21 @@
     }, function () { clear(box); add(box, [h('p', { class: 'm' }, 'No preview for this link.'), btn('Open original', { class: 'btn' }, function () { tell('feed.open', { url: l.url }); })]); });
     return box;
   }
-  function storyPanel(pb, c) {
-    pb.appendChild(linkSummary({ url: c.url, sig: c.sig }, true));
+  function storyPanel(pb, st) {
+    var c = st.c || {}, d = c.domain;
+    pb.appendChild(linkSummary({ url: st.url, sig: st.sig }, true));
+    if ((c.outlets || []).length) {
+      pb.appendChild(h('div', { class: 'h6', style: 'margin-top:6px' }, 'Also covered by'));
+      c.outlets.forEach(function (o) { pb.appendChild(btn([h('b', {}, o.site + ' '), h('span', { class: 'm' }, o.title)], { class: 'outl' }, function () { tell('feed.open', { url: o.url }); })); });
+    }
+    if (d) {
+      var tr = S.news.trusted.indexOf(d) >= 0;
+      pb.appendChild(h('div', { class: 'row', style: 'gap:6px;justify-content:flex-start' },
+        btn(tr ? 'Stop trusting ' + d : 'Trust ' + d, { class: 'btn sm', title: 'Stories from a site you trust rank higher' }, function () { toggleSite('trusted', d); renderPanel(); }),
+        btn('Hide ' + d, { class: 'btn sm', title: 'Never show stories from this site' }, function () { toggleSite('hidden', d); S.sel = null; render(); })));
+    }
     pb.appendChild(h('div', { class: 'h6', style: 'margin-top:6px' }, 'Shared in your circle'));
-    c.notes.forEach(function (n) { pb.appendChild(replyRow(n)); });
+    st.notes.forEach(function (n) { pb.appendChild(replyRow(n)); });
   }
   // Replies: every reply under the post, threaded. "Reply" under a comment
   // opens a composer right there; the box at the bottom replies to the post.
@@ -448,7 +462,7 @@
       };
     }
     var bottom = composer(it, null, posted(null), false);
-    panelEl.appendChild(bottom);
+    V.panel.appendChild(bottom);
     function draw() {
       clear(list); inline = null;
       var have = {}; last.replies.forEach(function (r) { have[r.id] = 1; });
@@ -489,118 +503,16 @@
     load(false);
   }
 
-  // ---------- zaps (NIP-57, paid from the owner's own wallet) ----------
-  var AMOUNTS = [21, 100, 500, 1000, 5000, 10000];
-  function qrSvg(rows) {
-    var n = rows.length, d = '', q = 4;
-    rows.forEach(function (r, y) { var x = 0; while (x < n) { if (r[x] === '1') { var s0 = x; while (x < n && r[x] === '1') x++; d += 'M' + (s0 + q) + ' ' + (y + q) + 'h' + (x - s0) + 'v1h-' + (x - s0) + 'z'; } else x++; } });
-    var v = document.createElementNS(NS, 'svg'), bg = document.createElementNS(NS, 'rect'), pa = document.createElementNS(NS, 'path');
-    v.setAttribute('viewBox', '0 0 ' + (n + 2 * q) + ' ' + (n + 2 * q)); v.setAttribute('class', 'qr'); v.setAttribute('role', 'img'); v.setAttribute('aria-label', 'Lightning invoice QR code'); v.setAttribute('shape-rendering', 'crispEdges');
-    bg.setAttribute('width', '100%'); bg.setAttribute('height', '100%'); bg.setAttribute('fill', '#fff'); pa.setAttribute('d', d); pa.setAttribute('fill', '#000');
-    v.appendChild(bg); v.appendChild(pa);
-    return v;
-  }
-  function zapSheet(it, ready) {
-    var pk = it.pubkey, name = prof(pk).name, amt = S.zapAmt || 1000;
-    var box = h('div', { class: 'glass zbox' });
-    var wrap = h('div', { class: 'modal zs', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Zap ' + name }, box);
-    function close() { wrap.remove(); document.removeEventListener('keydown', esc, true); }
-    function esc(e) { if (e.key === 'Escape') { e.stopPropagation(); close(); } }
-    document.addEventListener('keydown', esc, true);
-    wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
-    document.body.appendChild(wrap);
-    function head(title, sub) { return h('div', { class: 'zh' }, avatar(pk, 'sm'), h('div', { style: 'min-width:0' }, h('b', {}, title), sub ? h('div', { class: 'm' }, sub) : null), btn('\u2715', { class: 'more zx', 'aria-label': 'Close' }, close)); }
-    function pick() {
-      clear(box);
-      var go = btn('', { class: 'btn p zgo' }, function () { send(amt, note.value.trim()); });
-      var chips = AMOUNTS.map(function (v) { var c = btn(fmt(v), {}, function () { amt = v; custom.value = ''; sync(); }); c._v = v; return c; });
-      var custom = h('input', { class: 'zin', type: 'number', min: '1', max: '1000000', step: '1', inputmode: 'numeric', placeholder: 'Other amount', 'aria-label': 'Other amount in sats' });
-      var note = h('input', { class: 'zin', type: 'text', maxlength: '280', placeholder: 'Add a note (optional)', 'aria-label': 'Note with the zap' });
-      function sync() { go.textContent = 'Zap ' + amt.toLocaleString() + ' sats'; chips.forEach(function (c) { c.setAttribute('aria-pressed', c._v === amt ? 'true' : 'false'); }); }
-      custom.addEventListener('input', function () { var v = Math.floor(Number(custom.value)); if (v >= 1 && v <= 1e6) { amt = v; sync(); } });
-      note.addEventListener('keydown', function (e) { if (e.key === 'Enter') go.click(); });
-      add(box, [head('Zap ' + name, it.id ? 'For this post' : 'Straight to them'), h('div', { class: 'seg zam', role: 'group', 'aria-label': 'Amount in sats' }, chips), h('div', { class: 'zrow' }, custom, h('span', { class: 'm' }, 'sats')), note, go,
-        h('p', { class: 'm' }, S.wallet && S.wallet.connected ? 'Paid from your connected wallet after you confirm. A tap on the bolt zaps ' + S.wallet.tap + ' sats.' : 'Paid from your own Lightning wallet. You confirm the amount before anything is signed.'),
-        S.wallet && S.wallet.connected ? null : btn('Connect a wallet for one-tap zaps', { class: 'more', style: 'text-align:left' }, function () { close(); tell('feed.wallet'); })]);
-      sync();
-    }
-    function send(sats, comment) {
-      S.zapAmt = sats;
-      clear(box); add(box, [head('Zap ' + name), h('p', { class: 'm' }, 'Asking ' + name + '\u2019s wallet for an invoice\u2026')]);
-      rpc('feed.zap', { pubkey: pk, id: it.id || null, kind: it.kind || null, sats: sats, comment: comment, name: name }, 300000).then(function (r) {
-        if (!wrap.isConnected) return;
-        if (r.paid) done(r.sats); else invoice(r);
-      }, function (e) {
-        if (e.message === 'cancelled') return close();
-        clear(box); add(box, [head('Zap ' + name), h('p', {}, 'Could not zap: ' + e.message), btn('Back', { class: 'btn' }, pick)]);
-      });
-    }
-    function invoice(r) {
-      clear(box);
-      var st = h('p', { class: 'm', role: 'status' }, r.walletError ? 'Your connected wallet did not pay (' + r.walletError + '). You can pay this invoice another way.' : r.bound === false ? 'Waiting for payment\u2026 This wallet may not confirm zaps, so close this once your wallet says paid.' : 'Waiting for payment\u2026');
-      add(box, [head('Pay ' + r.sats.toLocaleString() + ' sats', 'Scan with any Lightning wallet'), r.qr ? qrSvg(r.qr) : null,
-        h('div', { class: 'zrow c' }, btn('Open wallet', { class: 'btn p' }, function () { tell('feed.lightning', { pr: r.pr }); }),
-          btn('Copy invoice', { class: 'btn' }, function () { rpc('feed.copy', { text: r.pr }).then(function () { toast('Invoice copied'); }, function () { inv.focus(); toast('Select the invoice text to copy it'); }); })),
-        h('input', { class: 'zin inv', readonly: true, value: r.pr, 'aria-label': 'Invoice', onfocus: function (e) { e.target.select(); } }), st,
-        r.bound === false ? btn('Close', { class: 'btn' }, close) : null]);
-      var inv = box.querySelector('.inv'), t0 = Date.now();
-      (function poll() {
-        if (!wrap.isConnected) return;
-        if (Date.now() - t0 > 600000) { st.textContent = 'Stopped checking. If you paid, the zap shows after the next refresh.'; return; }
-        rpc('feed.zapcheck', { req: r.req }).then(function (x) { if (x.paid) done(r.sats); else setTimeout(poll, 3000); }, function () { setTimeout(poll, 6000); });
-      })();
-    }
-    function done(sats) {
-      if (it.id) { S.zapped[it.id] = (S.zapped[it.id] || 0) + sats; if (it.f) patch(it); }
-      clear(box); add(box, [h('div', { class: 'zdone' }, icon('bolt'), h('b', {}, sats.toLocaleString() + ' sats sent'), h('p', { class: 'm' }, 'Zapped ' + name + '.')), btn('Close', { class: 'btn' }, close)]);
-      setTimeout(close, 2500);
-    }
-    if (ready) invoice(ready); else pick();
-  }
-
   // ---------- profile page ----------
   function person(pk) {
     closePop(); closeModal();
     if (S.section !== 'person') S.prev = S.section;
     S.person = pk; go('person');
   }
-  function personPage() {
-    var pk = S.person, shown = -1;
-    var head = h('div', { class: 'glass phead' }, h('p', { class: 'm' }, 'Opening ' + prof(pk).name + '\u2026'));
-    var posts = h('div', { class: 'feed' });
-    var feed = h('div', { class: 'feed' }, head, posts);
-    panelEl = h('aside', { class: 'glass panel', 'aria-label': 'Details' });
-    pg.appendChild(lay(feed, panelEl));
-    renderPanel();
-    function tagEl(t, c) { return h('span', { class: 'tag' + (c ? ' ' + c : '') }, t); }
-    function draw(d, final) {
-      Object.assign(S.profiles, d.profiles || {}); Object.assign(S.quoted, d.quoted || {});
-      var p = d.profile, rel = d.rel;
-      S.profiles[pk] = Object.assign({}, S.profiles[pk] || {}, p);
-      clear(head);
-      add(head, [btn('\u2039 Back', { class: 'more' }, function () { go(S.prev && S.prev !== 'person' ? S.prev : 'circle'); }),
-        h('div', { class: 'ph' }, avatar(pk, 'xl', p.big),
-          h('div', { style: 'min-width:0' }, h('h2', {}, p.name), h('div', { class: 'm' }, [p.nip05 ? p.nip05.replace(/^_@/, '') : '', p.lud16].filter(Boolean).join(' \u00B7 ')),
-            h('div', { class: 'tags' }, rel.owner ? tagEl('You', 'f') : rel.follow ? tagEl('In your circle', 'f') : rel.hop2 ? tagEl('Followed by ' + rel.hop2 + ' in your circle') : tagEl('Outside your circle'), rel.muted ? tagEl('Muted', 'warn') : null))),
-        p.about ? h('div', { class: 'txt' }, richText(p.about, true)) : null,
-        h('div', { class: 'acts' }, p.zap && !rel.owner ? act([icon('bolt'), ' Zap'], { class: 'zb' }, function () { zapSheet({ pubkey: pk }); }) : null,
-          act('Copy npub', {}, function () { rpc('feed.copy', { text: p.npub }).then(function () { toast('npub copied'); }, function () { toast('Could not copy'); }); }))]);
-      if (d.items.length === shown && !final) return;
-      shown = d.items.length;
-      clear(posts);
-      d.items.sort(function (a, b) { return b.created_at - a.created_at; }).forEach(function (it) { posts.appendChild(noteCard(it, { peek: false })); });
-      if (!d.items.length) posts.appendChild(h('div', { class: 'glass empty' }, final ? 'No recent posts from ' + p.name + '.' : 'Looking for recent posts\u2026'));
-    }
-    rpc('feed.author', { pk: pk }).then(function (d) {
-      if (S.section !== 'person' || S.person !== pk) return;
-      draw(d, false);
-      return rpc('feed.author', { pk: pk, live: true }).then(function (d2) { if (S.section === 'person' && S.person === pk) { shown = -1; draw(d2, true); } });
-    }).catch(function (e) { clear(head); head.appendChild(h('p', { class: 'm' }, 'Could not open this profile: ' + e.message)); });
-  }
 
   // ---------- modal (used outside Circle, and for the reader/player) ----------
   var modalEl = null, inModal = false, pagePanel = null;
-  function closeModal() { if (modalEl) { modalEl.remove(); modalEl = null; } if (inModal) { inModal = false; panelEl = pagePanel; } }
+  function closeModal() { if (modalEl) { modalEl.remove(); modalEl = null; } if (inModal) { inModal = false; V.panel = pagePanel; } }
   function modal(content, bare, cls) {
     closeModal();
     modalEl = h('div', { class: 'modal' + (cls ? ' ' + cls + 'w' : ''), role: 'dialog', 'aria-modal': 'true' }, h('div', { class: 'glass' + (cls ? ' ' + cls : '') }, bare ? null : h('div', { class: 'row', style: 'margin-bottom:8px' }, h('span'), btn('\u2715', { class: 'btn sm', 'aria-label': 'Close' }, closeModal)), content));
@@ -612,64 +524,32 @@
     var p = h('aside', { class: 'glass panel open', style: 'position:static;height:70vh;display:flex' });
     var wrap = it.story ? h('div', { class: 'smod' }, p) : h('div', { class: 'lay', style: 'grid-template-columns:minmax(0,1fr) 380px' }, h('div', {}, noteCard(it, { peek: false })), p);
     modal(wrap, it.story);
-    pagePanel = panelEl; panelEl = p; inModal = true; S.sel = it; renderPanel();
+    pagePanel = V.panel; V.panel = p; inModal = true; S.sel = it; renderPanel();
   }
 
-  // ---------- markdown (subset) -> DOM ----------
-  function inlineMd(s, imgs) {
-    var out = [], re = /(\*\*([^*]+)\*\*)|(\*([^*\s][^*]*)\*|_([^_\s][^_]*)_)|(`([^`]+)`)|(!?\[([^\]]*)\]\((https:\/\/[^)\s]+)\))/g, last = 0, m;
-    while ((m = re.exec(s))) {
-      if (m.index > last) out.push.apply(out, richText(s.slice(last, m.index)));
-      if (m[1]) out.push(h('strong', {}, m[2]));
-      else if (m[3]) out.push(h('em', {}, m[4] || m[5]));
-      else if (m[6]) out.push(h('code', {}, m[7]));
-      else if (m[8]) {
-        if (m[8][0] === '!') { if (imgs[m[10]]) out.push(h('img', { src: imgs[m[10]], alt: m[9] || '', loading: 'lazy' })); }
-        else out.push(btn(m[9] || m[10], { class: 'lk', style: 'word-break:normal' }, (function (u) { return function () { tell('feed.open', { url: u }); }; })(m[10])));
-      }
-      last = re.lastIndex;
-    }
-    if (last < s.length) out.push.apply(out, richText(s.slice(last)));
-    return out;
-  }
-  function markdown(src, imgs) {
-    var root = h('div', { class: 'md' }), lines = (src || '').replace(/\r/g, '').split('\n'), i = 0, para = [];
-    function flush() { if (para.length) { root.appendChild(h('p', {}, inlineMd(para.join(' '), imgs))); para = []; } }
-    while (i < lines.length) {
-      var l = lines[i], m;
-      if (/^```/.test(l)) { flush(); var code = []; i++; while (i < lines.length && !/^```/.test(lines[i])) code.push(lines[i++]); root.appendChild(h('pre', {}, h('code', {}, code.join('\n')))); i++; continue; }
-      if ((m = /^(#{1,6})\s+(.*)$/.exec(l))) { flush(); root.appendChild(h('h' + Math.min(4, Math.max(2, m[1].length + 1)), {}, inlineMd(m[2], imgs))); i++; continue; }
-      if (/^\s*([-*_])\s*\1\s*\1[\s\1]*$/.test(l)) { flush(); root.appendChild(h('hr')); i++; continue; }
-      if (/^>\s?/.test(l)) { flush(); var q = []; while (i < lines.length && /^>\s?/.test(lines[i])) q.push(lines[i++].replace(/^>\s?/, '')); root.appendChild(h('blockquote', {}, inlineMd(q.join(' '), imgs))); continue; }
-      if (/^\s*([-*+]|\d+[.)])\s+/.test(l)) {
-        flush(); var ord = /^\s*\d/.test(l), list = h(ord ? 'ol' : 'ul');
-        while (i < lines.length && /^\s*([-*+]|\d+[.)])\s+/.test(lines[i])) list.appendChild(h('li', {}, inlineMd(lines[i++].replace(/^\s*([-*+]|\d+[.)])\s+/, ''), imgs)));
-        root.appendChild(list); continue;
-      }
-      if (!l.trim()) { flush(); i++; continue; }
-      para.push(l.trim()); i++;
-    }
-    flush();
-    return root;
-  }
-  function openReader(it) {
-    var art = h('article', { class: 'reader' }, h('p', { class: 'm' }, 'Opening\u2026'));
-    modal(art);
-    rpc('feed.note', { id: it.id }).then(function (r) {
-      Object.assign(S.profiles, r.profiles || {});
-      var x = r.item, p = prof(x.pubkey), words = (x.content.match(/\S+/g) || []).length;
-      clear(art);
-      add(art, [x.image ? h('div', { class: 'viewer', style: 'max-height:340px;min-height:180px' }, h('img', { src: x.image, alt: '' })) : null,
-        h('h1', {}, x.title || 'Untitled'),
-        h('div', { class: 'nh', style: 'margin-bottom:22px' }, avatar(x.pubkey, 'sm'), h('span', {}, who(x.pubkey), h('span', { class: 'm' }, ' \u00B7 ' + ago(x.created_at) + ' \u00B7 ' + Math.max(1, Math.round(words / 230)) + ' min read')), viaLine(x)),
-        (x.highlights || []).length ? h('div', { class: 'side', style: 'margin-bottom:20px' }, h('div', { class: 'h6' }, 'Highlighted by your circle'), x.highlights.slice(0, 3).map(function (hl) { return h('div', { class: 'hl' }, '\u201C' + hl.text + '\u201D ', h('span', { class: 'm' }, '\u2014 ' + prof(hl.pubkey).name)); })) : null,
-        markdown(x.content, x.imgs || {})]);
-    }, function () { clear(art); art.appendChild(h('p', { class: 'm' }, 'Could not open this article.')); });
-  }
 
-  // ---------- pages ----------
+  // ---------- parts loaded on first use (ADR-0006) ----------
+  // Only these same-origin files, by fixed name; script-src 'self' allows nothing else.
+  var PARTS = { today: 1, circle: 1, news: 1, watch: 1, listen: 1, read: 1, signal: 1, person: 1, zap: 1 };
+  var M = {}, got = {};
+  function need(n) {
+    if (!PARTS[n]) return Promise.reject(new Error('unknown part'));
+    if (!got[n]) got[n] = new Promise(function (res, rej) {
+      var el = document.createElement('script');
+      el.onload = function () { if (M[n]) res(M[n]); else rej(new Error('part ' + n + ' did not load')); };
+      el.onerror = function () { delete got[n]; el.remove(); rej(new Error('part ' + n + ' did not load')); };
+      el.setAttribute('src', 'sec-' + n + '.js');
+      document.head.appendChild(el);
+    });
+    return got[n];
+  }
+  window.HibikiNap = { def: function (n, f) { if (PARTS[n] && !M[n]) M[n] = f(K); } };
+  function failed(e) { toast('Could not open: ' + e.message); }
+  function zapSheet(it, ready) { need('zap').then(function (m) { m.zapSheet(it, ready); }, failed); }
+  function openReader(it) { need('read').then(function (m) { m.openReader(it); }, failed); }
+
   var NAV = [['today', 'Today'], ['circle', 'Circle'], ['news', 'News'], ['watch', 'Watch'], ['listen', 'Listen'], ['read', 'Read']];
-  var root = document.getElementById('root'), pg;
+  var root = document.getElementById('root');
   function shellUI() {
     clear(root);
     var search = h('input', { class: 'srch', type: 'search', placeholder: 'Search what\u2019s loaded\u2026', 'aria-label': 'Search', value: S.q });
@@ -681,8 +561,8 @@
       search,
       btn(h('i'), { class: 'orb', 'aria-label': 'Your signal', title: 'Your signal' }, function () { go('signal'); }),
       meBtn));
-    pg = h('main', { class: 'pg' });
-    root.appendChild(pg);
+    V.pg = h('main', { class: 'pg' });
+    root.appendChild(V.pg);
   }
   function go(s) { S.section = s; S.sel = null; S.shown = 30; render(); window.scrollTo(0, 0); }
   function load(section) {
@@ -696,15 +576,17 @@
   function render() {
     shellUI();
     var s = S.section;
-    if (s === 'signal') return signalPage();
-    if (s === 'person') return personPage();
-    pg.appendChild(h('p', { class: 'm', style: 'padding:30px;text-align:center' }, 'Gathering\u2026'));
-    load(s).then(function (d) {
+    if (s === 'signal' || s === 'person') {
+      return need(s).then(function (m) { if (S.section === s) (s === 'signal' ? m.signalPage : m.personPage)(); }, failed);
+    }
+    V.pg.appendChild(h('p', { class: 'm', style: 'padding:30px;text-align:center' }, 'Gathering\u2026'));
+    // The section's data and its file load side by side; the file is cached after the first visit.
+    Promise.all([load(s), need(s)]).then(function (r) {
       if (S.section !== s) return;
-      clear(pg);
-      ({ today: today, circle: circlePage, news: news, watch: watch, listen: listen, read: read })[s](d);
+      clear(V.pg);
+      r[1][s === 'circle' ? 'circlePage' : s](r[0]);
     }, function (e) {
-      clear(pg); pg.appendChild(h('div', { class: 'empty' }, h('p', {}, 'Your node did not answer: ' + e.message), btn('Try again', { class: 'btn' }, function () { delete S.data[s]; render(); })));
+      clear(V.pg); V.pg.appendChild(h('div', { class: 'empty' }, h('p', {}, 'Your node did not answer: ' + e.message), btn('Try again', { class: 'btn' }, function () { delete S.data[s]; render(); })));
     });
   }
   function ranked(items) { return R.rerank(items || [], S.weights); }
@@ -736,43 +618,9 @@
     return btn([h('span', { class: 'bars', 'aria-hidden': 'true' }, [6, 10, 7, 12].map(function (x) { return h('i', { style: 'height:' + x + 'px' }); })), label + ' \u00B7 tune'], { class: 'pill' }, function () { go('signal'); });
   }
 
-  function today(d) {
-    var hero = d.hero;
-    if (hero) {
-      var img = hero.media.find(function (m) { return m.type === 'image'; });
-      var words = (hero.content || '').replace(/https:\/\/\S+/g, '').replace(/nostr:\S+/g, '').trim();
-      pg.appendChild(btn([img ? h('img', { class: 'bg', src: img.src, alt: '' }) : null, img ? h('img', { class: 'fg', src: img.full || img.src, alt: img.alt || '' }) : null,
-        h('span', { class: 'ov' }, h('span', { class: 'kb' }, 'TOP IN YOUR CIRCLE'), h('p', {}, words.length > 12 ? words.slice(0, 220) : 'Shared by ' + prof(hero.pubkey).name),
-          h('span', { class: 'hm' }, avatar(hero.pubkey, 'xs'), prof(hero.pubkey).name + ' \u00B7 ' + ago(hero.created_at) + (hero.f.ce ? ' \u00B7 ' + hero.f.ce + ' in your circle reacted' : '')))], { class: 'hero' }, function () { openModal(hero); }));
-    }
-    pg.appendChild(h('div', { class: 'row', style: 'margin-top:18px' }, h('span', { class: 'm' }, 'Hand-picked from ' + fmt(d.graph.follows) + ' people you follow and the people they follow'), signalPill()));
-    var items = ranked(d.items).filter(function (x) { return x !== hero; }).slice(0, 6);
-    if (items.length) { pg.appendChild(sec('From your circle', 'Original posts')); pg.appendChild(h('div', { class: 'grid' }, items.map(function (it) { return noteCard(it, { peek: false }); }))); }
-    if ((d.live || []).length || (d.watch || []).length) { pg.appendChild(sec('Watch', d.live.length ? d.live.length + ' live now' : null)); pg.appendChild(h('div', { class: 'grid sm' }, d.live.map(liveCard).concat(d.watch.map(videoCard)))); }
-    if ((d.read || []).length) { pg.appendChild(sec('Worth reading')); pg.appendChild(h('div', { class: 'grid' }, d.read.map(articleCard))); }
-    if ((d.news || []).length) { pg.appendChild(sec('In the news', 'What your circle is sharing')); pg.appendChild(h('div', { class: 'slist' }, d.news.map(function (c) { return storyCard(c); }))); }
-    if (!hero && !items.length) pg.appendChild(h('div', { class: 'empty' }, 'Your node is still gathering your circle. This fills up within a few minutes.'));
-  }
 
-  function circlePage(d) {
-    var all = ranked(d.items);
-    if (S.filter === 'media') all = all.filter(function (x) { return x.f.m; });
-    if (S.filter === 'follow') all = all.filter(function (x) { return x.f.c; });
-    if (S.q) all = all.filter(function (x) { return (x.content || '').toLowerCase().indexOf(S.q) >= 0 || prof(x.pubkey).name.toLowerCase().indexOf(S.q) >= 0; });
-    var feed = h('div', { class: 'feed' },
-      h('div', { class: 'fh' }, h('span', { class: 'seg', role: 'group', 'aria-label': 'Filter' }, [['all', 'Original posts'], ['media', 'With media'], ['follow', 'Following only']].map(function (f) { return btn(f[1], { 'aria-pressed': S.filter === f[0] ? 'true' : 'false' }, function () { S.filter = f[0]; S.shown = 30; render(); }); })),
-        h('span', { class: 'row' }, h('span', { class: 'm' }, S.q ? all.length + ' matching \u201C' + S.q + '\u201D' : all.length + ' original posts'), signalPill())));
-    all.slice(0, S.shown).forEach(function (it) { feed.appendChild(noteCard(it)); });
-    if (all.length > S.shown) feed.appendChild(btn('Show more', { class: 'btn', style: 'align-self:center' }, function () { S.shown += 30; render(); }));
-    if (!all.length) feed.appendChild(h('div', { class: 'glass empty' }, S.q ? 'Nothing loaded matches that.' : 'No original posts yet. Your node checks for new ones every few minutes.'));
-    panelEl = h('aside', { class: 'glass panel', 'aria-label': 'Details' });
-    pg.appendChild(lay(feed, panelEl));
-    renderPanel();
-  }
-
-  // A shared link becomes a "story": picking it shows the TL;DR panel.
   function story(c) {
-    return c._s || (c._s = { story: 1, id: 's' + c.url, url: c.url, sig: c.sig, pubkey: c.sharers[0], sharers: c.sharers, created_at: c.created_at, notes: c.notes, media: [], links: [] });
+    return c._s || (c._s = { story: 1, c: c, id: 's' + c.url, url: c.url, sig: c.sig, pubkey: c.sharers[0], sharers: c.sharers, created_at: c.created_at, notes: c.notes, media: [], links: [] });
   }
   // News (ADR-0005): one lead story, then a tight list. Headline, site, read
   // time and a one-line TL;DR come with the feed; links the node has not read
@@ -794,49 +642,39 @@
     var t = n ? n + ' in your circle' + (all > n ? ' \u00B7 ' + (all - n) + ' more' : '') : 'Shared by ' + (all === 1 ? prof(c.sharers[0]).name : all + ' people');
     return h('span', { class: 'via', style: 'margin-left:0' }, stack(c.sharers), t);
   }
-  function bestNote(c) {
-    var n = (c.notes || [])[0], t = n ? plain(n.content) : '';
-    return t ? h('div', { class: 'rp sq' }, avatar(n.pubkey, 'xs'), h('div', { class: 'txt' }, h('b', {}, prof(n.pubkey).name + ' '), t)) : null;
+  function bestNote(c, pick) {
+    var n = (c.notes || [])[0], t = n ? plain(n.content) : '', more = (c.notes || []).length - 1;
+    return t ? h('div', { class: 'rp sq' }, avatar(n.pubkey, 'xs'), h('div', { class: 'txt' }, h('b', {}, prof(n.pubkey).name + ' '), t),
+      more > 0 ? btn('+' + more + ' more', { class: 'more', 'aria-label': 'Show all ' + (more + 1) + ' comments' }, pick) : null) : null;
+  }
+  // News preferences: kept by the shell in this browser only, never sent to the node.
+  function newsSave() { tell('feed.news', S.news); }
+  function toggleSite(k, d) { var a = S.news[k], i = a.indexOf(d); if (i >= 0) a.splice(i, 1); else a.push(d); newsSave(); }
+  function storyPrefs(list) {
+    var n = S.news;
+    return (list || []).filter(function (c) { return n.hidden.indexOf(c.domain) < 0 && (!n.followsOnly || c.inCircle > 0); })
+      .map(function (c) { c.f.t = n.trusted.indexOf(c.domain) >= 0 ? 1 : 0; return c; });
   }
   function storyCard(c, lead) {
-    var st = story(c), pick = function () { select(st); };
-    var card = h('div', { class: 'glass card pick story' + (lead ? ' lead' : '') + (S.sel && S.sel.id === st.id ? ' sel' : ''), 'data-id': st.id, tabindex: '0', role: 'button' });
+    var st = story(c), rd = S.news.read;
+    var pick = function () {
+      if (rd.indexOf(c.id) < 0) { rd.push(c.id); if (rd.length > 300) rd.shift(); newsSave(); card.classList.add('seen'); }
+      select(st);
+    };
+    var card = h('div', { class: 'glass card pick story' + (lead ? ' lead' : '') + (S.sel && S.sel.id === st.id ? ' sel' : '') + (rd.indexOf(c.id) >= 0 ? ' seen' : ''), 'data-id': st.id, tabindex: '0', role: 'button' });
     storyMeta(c, function (m) {
       clear(card);
       add(card, [lead && m.image ? h('div', { class: 'tsimg' }, h('img', { src: m.image, alt: '', loading: 'lazy' })) : null,
-        h('div', { class: 'srow' }, siteBadge(m, c), h('span', { class: 'm' }, (m.site || host(c.url)) + (m.readMinutes ? ' \u00B7 ' + m.readMinutes + ' min read' : '')), h('span', { class: 'm', style: 'margin-left:auto' }, ago(c.created_at))),
+        h('div', { class: 'srow' }, siteBadge(m, c), h('span', { class: 'm' }, (m.site || host(c.url)) + (m.readMinutes ? ' \u00B7 ' + m.readMinutes + ' min read' : '')), (c.outlets || []).length ? h('span', { class: 'tag' }, c.outlets.length + 1 + ' outlets') : null,
+          S.newsSince && c.created_at > S.newsSince ? h('span', { class: 'tag f' }, 'New') : null, h('span', { class: 'm', style: 'margin-left:auto' }, ago(c.created_at))),
         h(lead ? 'h3' : 'b', { class: 'shl' }, m.title || c.url.replace(/^https:\/\//, '').slice(0, 90)),
         m.tldr ? h('p', { class: 'stl' + (lead ? ' l2' : '') }, m.tldr) : null,
         h('div', { class: 'row' }, sharedLine(c), !lead && m.image ? h('img', { class: 'sthumb', src: m.image, alt: '', loading: 'lazy' }) : null),
-        bestNote(c)]);
+        bestNote(c, pick)]);
     });
     card.addEventListener('click', function (e) { if (!e.target.closest('a,button')) pick(); });
     card.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
     return card;
-  }
-  function storyList(list) {
-    if (!list.length) return h('div', { class: 'glass empty' }, 'No articles shared in your circle in the last three days.');
-    // Lead with the first of the top three that has a picture.
-    var li = list.slice(0, 3).findIndex(function (c) { return c.meta && c.meta.image; });
-    if (li > 0) list = [list[li]].concat(list.slice(0, li), list.slice(li + 1));
-    return h('div', { class: 'stories' }, storyCard(list[0], true), h('div', { class: 'slist' }, list.slice(1).map(function (c) { return storyCard(c); })));
-  }
-  function devCard(c) {
-    return btn([h('span', { class: 'sico', style: 'background:' + siteHue(c.site) }, (c.site[0] || '?').toUpperCase()), h('span', { style: 'min-width:0' }, h('b', { style: 'display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, c.title), h('span', { class: 'm' }, c.site + ' \u00B7 ' + (c.sharers.length === 1 ? prof(c.sharers[0]).name : c.sharers.length + ' people')))],
-      { class: 'glass card dev' }, function () { tell('feed.open', { url: c.url }); });
-  }
-  function news(d) {
-    var list = R.rerank(d.clusters || [], S.weights, { perAuthor: 2, by: 'site' });
-    var main = h('div', {}, sec('In the news', 'Articles your circle is sharing, grouped by story'), storyList(list));
-    function side() { return h('div', { class: 'side' }, h('p', { class: 'm', style: 'margin:0 0 6px' }, 'Tap a story for a quick summary.'),
-      (d.dev || []).length ? [sec('Dev', 'Code your circle is sharing'), d.dev.map(devCard)] : null,
-      sec('Mekiki', 'Curators in your circle'),
-      d.curators.length ? d.curators.map(function (c) { return h('div', { class: 'glass card', style: 'flex-direction:row;align-items:center' }, avatar(c.pubkey, 'sm'), h('div', { style: 'min-width:0' }, h('b', {}, c.title || 'Collection'), h('div', { class: 'm' }, prof(c.pubkey).name + ' \u00B7 ' + c.size + ' items')), h('span', { class: 'tag f', style: 'margin-left:auto' }, '\u76EE\u5229\u304D')); }) : h('p', { class: 'm' }, 'When people you follow publish curated lists (NIP-51 sets), they appear here.')); }
-    panelEl = h('aside', { class: 'glass panel', 'aria-label': 'Story' });
-    panelEl._empty = side;
-    if (S.sel && !S.sel.story) S.sel = null;
-    pg.appendChild(lay(main, panelEl));
-    renderPanel();
   }
   function poster(it) { var m = it.media.find(function (x) { return x.thumb; }) || it.media.find(function (x) { return x.type === 'image'; }); return m ? (m.thumb || m.src) : null; }
   function videoCard(it) {
@@ -869,119 +707,24 @@
     var p = h('aside', { class: 'glass panel open' });
     p._acts = true;
     modal(h('div', { class: 'vmod' }, h('div', { class: 'stage' }, vid), p), true, 'vm');
-    pagePanel = panelEl; panelEl = p; inModal = true; S.sel = it; S.focus = focus || null; renderPanel();
+    pagePanel = V.panel; V.panel = p; inModal = true; S.sel = it; S.focus = focus || null; renderPanel();
   }
   function liveCard(l) {
     return h('div', { class: 'glass card' }, h('span', { class: 'cover' }, l.image ? h('img', { src: l.image, alt: '' }) : null, h('span', { class: 'kb live', style: 'position:absolute;top:10px;left:10px' }, 'LIVE' + (l.viewers ? ' \u00B7 ' + fmt(l.viewers) : ''))), h('span', { class: 'nh' }, avatar(l.pubkey, 'xs'), h('b', { style: 'font-size:13px' }, prof(l.pubkey).name)), h('span', { class: 'sum' }, l.title));
   }
-  function watch(d) {
-    if (d.live.length) { pg.appendChild(sec('Live now')); pg.appendChild(h('div', { class: 'grid sm' }, d.live.map(liveCard))); }
-    pg.appendChild(sec('Watch', 'Videos from your circle this week \u00B7 tap to play through your node'));
-    var items = ranked(d.items);
-    pg.appendChild(items.length ? h('div', { class: 'grid sm' }, items.map(videoCard)) : h('div', { class: 'glass empty' }, 'No videos from your circle this week.'));
-    // Video links (YouTube and the like) shared in the circle; they open on the original site.
-    if ((d.shared || []).length) { pg.appendChild(sec('Shared videos', 'Links your circle is sharing \u00B7 open on the original site')); pg.appendChild(h('div', { class: 'grid sm' }, d.shared.map(function (c) { return h('div', { class: 'glass card' }, linkCard({ url: c.url, sig: c.sig }), sharedLine(c)); }))); }
-  }
-  function listen(d) {
-    pg.appendChild(sec('Listen', 'Music, voice notes and podcasts from your circle'));
-    var items = ranked(d.items);
-    pg.appendChild(items.length ? h('div', { class: 'feed', style: 'max-width:760px' }, items.map(function (it) { return noteCard(it, { peek: false }); })) : h('div', { class: 'glass empty' }, 'Nothing to listen to yet this week.'));
-  }
   function articleCard(it) {
     return btn([h('span', { class: 'cover' }, it.image ? h('img', { src: it.image, alt: '', loading: 'lazy' }) : null), h('h3', {}, it.title || 'Untitled'), h('p', { class: 'sum' }, it.content), h('span', { class: 'nh' }, avatar(it.pubkey, 'xs'), h('span', { class: 'm' }, prof(it.pubkey).name + ' \u00B7 ' + ago(it.created_at)), viaLine(it))], { class: 'glass card' }, function () { openReader(it); });
-  }
-  function read(d) {
-    var items = ranked(d.items);
-    var main = h('div', {}, sec('Read', 'Long-form from your circle'), items.length ? h('div', { class: 'grid' }, items.map(articleCard)) : h('div', { class: 'glass empty' }, 'No articles from your circle this month.'));
-    var side = h('aside', { class: 'side' }, sec('Highlights', 'What your circle marked'), d.highlights.length ? d.highlights.slice(0, 12).map(function (x) { return h('div', { class: 'glass card' }, h('div', { class: 'hl' }, '\u201C' + x.text + '\u201D'), h('div', { class: 'nh' }, avatar(x.pubkey, 'xs'), h('span', { class: 'm' }, prof(x.pubkey).name + ' \u00B7 ' + ago(x.created_at)), x.source ? btn('Source', { class: 'more', style: 'margin-left:auto' }, function () { tell('feed.open', { url: x.source }); }) : null)); }) : h('p', { class: 'm' }, 'No highlights yet.'));
-    pg.appendChild(h('div', { class: 'two' }, main, side));
-  }
-
-  // ---------- your signal ----------
-  var PRESETS = {
-    Calm: { circle: 1.2, explore: 0.2, social: 0.6, popular: 0.1, zaps: 0.1, fresh: 0.15, media: 0 },
-    Balanced: R.DEFAULTS,
-    Lively: { circle: 1, explore: 0.35, social: 0.7, popular: 0.4, zaps: 0.25, fresh: 0.85, media: 0.2 },
-    Explorer: { circle: 0.8, explore: 0.9, social: 0.5, popular: 0.3, zaps: 0.2, fresh: 0.5, media: 0.1 },
-  };
-  function setWeights(w) { S.weights = R.weights(w); tell('feed.tune', { weights: S.weights }); }
-  function signalPage() {
-    var w = R.weights(S.weights);
-    var preview = h('div', { class: 'feed' });
-    function refreshPreview() {
-      clear(preview);
-      var d = S.data.circle;
-      if (!d) { preview.appendChild(h('p', { class: 'm' }, 'Open Circle once to preview changes here.')); return; }
-      ranked(d.items).slice(0, 4).forEach(function (it) { preview.appendChild(noteCard(it, { peek: false })); });
-    }
-    var sliders = h('div', {});
-    Object.keys(R.DEFAULTS).forEach(function (k) {
-      var min = k === 'media' ? -1 : 0, max = k === 'circle' ? 2 : 1;
-      var out = h('span', { class: 'm' }, w[k].toFixed(2));
-      var input = h('input', { type: 'range', min: String(min), max: String(max), step: '0.05', value: String(w[k]), 'aria-label': R.LABELS[k] });
-      input.addEventListener('input', function () { var x = R.weights(S.weights); x[k] = Number(input.value); out.textContent = x[k].toFixed(2); setWeights(x); refreshPreview(); });
-      sliders.appendChild(h('div', { class: 'sl' }, h('span', { class: 's' }, R.LABELS[k]), input, out));
-    });
-    var presets = h('div', { class: 'presets' }, Object.keys(PRESETS).map(function (n) {
-      var p = R.weights(PRESETS[n]), on = Object.keys(p).every(function (k) { return Math.abs(p[k] - w[k]) < 0.001; });
-      return btn([h('b', {}, n), h('div', { class: 'm' }, { Calm: 'Fewer, slower, closest friends', Balanced: 'The default mix', Lively: 'What is happening right now', Explorer: 'More friends of friends' }[n])], { 'aria-pressed': on ? 'true' : 'false' }, function () { setWeights(PRESETS[n]); render(); });
-    }));
-    var stats = h('div', { class: 'stats' }, h('p', { class: 'm' }, 'Loading\u2026'));
-    var voices = h('div', { class: 'side' });
-    var theme = document.documentElement.dataset.theme;
-    pg.appendChild(h('div', { class: 'two' },
-      h('div', {}, sec('Your signal', 'How Hibiki picks for you'),
-        h('div', { class: 'glass card', style: 'padding:20px' }, h('p', { class: 's', style: 'margin:0 0 6px' }, 'These settings live only in this browser. Your node gathers public posts; the ranking happens here and is never published.'), presets, sliders),
-        sec('Preview', 'Top of Circle with these settings'), preview),
-      h('aside', { class: 'side' }, sec('This week'), stats, sec('Loudest voices'), voices,
-        sec('Wallet'), h('div', { class: 'glass card' }, h('p', { class: 's', style: 'margin:0' }, S.wallet && S.wallet.connected ? 'Connected. A tap on the bolt zaps ' + S.wallet.tap + ' sats with a 3 second Undo. Up to ' + fmt(S.wallet.cap) + ' sats a zap and ' + fmt(S.wallet.daily) + ' a day without asking (' + fmt(S.wallet.spent) + ' today).' : 'Connect a Nostr Wallet Connect wallet to zap in one tap. Until then, each zap shows an invoice or uses your browser wallet.'),
-          h('div', { class: 'row' }, h('span', { class: 'm' }, S.wallet && S.wallet.where === 'browser' ? 'Saved in this browser' : S.wallet && S.wallet.connected ? 'Saved encrypted to your npub' : ''), btn(S.wallet && S.wallet.connected ? 'Wallet settings' : 'Connect wallet', { class: 'btn sm' + (S.wallet && S.wallet.connected ? '' : ' p') }, function () { tell('feed.wallet'); }))),
-        sec('Appearance'), h('div', { class: 'glass card' }, h('div', { class: 'row' }, h('span', {}, 'Theme'), h('span', { class: 'seg' }, ['light', 'dark', 'auto'].map(function (t) { return btn(t[0].toUpperCase() + t.slice(1), { 'aria-pressed': (t === theme) ? 'true' : 'false' }, function () { tell('feed.settheme', { theme: t }); setTimeout(render, 50); }); }))),
-          h('div', { class: 'row' }, h('span', {}, 'Ask before liking'), h('span', { class: 'seg' }, [[true, 'On'], [false, 'Off']].map(function (o) { return btn(o[1], { 'aria-pressed': S.askLikes === o[0] ? 'true' : 'false' }, function () { S.askLikes = o[0]; tell('feed.pref', { askLikes: o[0] }); render(); }); }))),
-          h('div', { class: 'row' }, h('span', { class: 'm' }, 'Hibiki v' + (S.version || '')), btn('Sign out', { class: 'btn sm' }, function () { tell('feed.logout'); }))))));
-    refreshPreview();
-    if (!S.data.circle) load('circle').then(refreshPreview, function () {});
-    rpc('feed.signal').then(function (x) {
-      Object.assign(S.profiles, x.profiles || {});
-      clear(stats);
-      [['People you follow', x.follows], ['Friends of friends', x.hop2], ['Posts in 48h', x.items48h], ['Relays read', x.relays]].forEach(function (s) { stats.appendChild(h('div', { class: 'glass stat' }, h('b', {}, fmt(s[1])), h('span', { class: 'm' }, s[0]))); });
-      x.voices.slice(0, 8).forEach(function (v) { voices.appendChild(h('div', { class: 'glass card', style: 'flex-direction:row;align-items:center;padding:10px 12px' }, avatar(v.pk, 'sm'), who(v.pk, 'font-size:13px'), h('span', { class: 'm', style: 'margin-left:auto' }, v.n + ' posts'))); });
-      if (x.topics.length) voices.appendChild(h('div', {}, x.topics.slice(0, 12).map(function (t) { return h('span', { class: 'chip', style: 'margin:0 6px 6px 0' }, '#' + t[0]); })));
-    }, function () { clear(stats); });
-  }
-
-  // ---------- onboarding ----------
-  function onboarding() {
-    var step = 0, chosen = 'Balanced';
-    var box = h('div', { class: 'glass onb' });
-    var wrap = h('div', { class: 'modal' }, box);
-    document.body.appendChild(wrap);
-    function dots() { return h('div', { class: 'dots' }, [0, 1, 2].map(function (i) { return h('i', { class: i <= step ? 'on' : '' }); })); }
-    function draw() {
-      clear(box);
-      if (step === 0) {
-        var st = h('p', { class: 's' }, 'Reading who you follow\u2026');
-        add(box, [dots(), h('div', { class: 'h6' }, 'Step 1 of 3'), h('h2', {}, 'Gathering your circle'), h('p', { class: 's' }, 'Your node is reading the people you follow, where they post, and what they have shared lately. Images and links come through your node, so nobody else sees you reading.'), st, btn('Continue', { class: 'btn p' }, function () { step = 1; draw(); })]);
-        (function poll() { rpc('feed.status').then(function (x) { st.textContent = x.follows ? fmt(x.follows) + ' people found' + (x.sync ? ' \u00B7 first posts are in' : ' \u00B7 collecting posts\u2026') : 'Reading who you follow\u2026'; if (!x.sync && box.isConnected && step === 0) setTimeout(poll, 2500); }, function () {}); })();
-      } else if (step === 1) {
-        add(box, [dots(), h('div', { class: 'h6' }, 'Step 2 of 3'), h('h2', {}, 'Pick a pace'), h('p', { class: 's' }, 'You can change this any time from the orb at the top right.'),
-          h('div', { class: 'presets' }, Object.keys(PRESETS).map(function (n) { return btn([h('b', {}, n), h('div', { class: 'm' }, { Calm: 'Fewer, slower, closest friends', Balanced: 'The default mix', Lively: 'What is happening right now', Explorer: 'More friends of friends' }[n])], { 'aria-pressed': chosen === n ? 'true' : 'false' }, function () { chosen = n; draw(); }); })),
-          btn('Continue', { class: 'btn p' }, function () { setWeights(PRESETS[chosen]); step = 2; draw(); })]);
-      } else {
-        add(box, [dots(), h('div', { class: 'h6' }, 'Step 3 of 3'), h('h2', {}, 'You are set'), h('p', { class: 's' }, 'Circle shows original posts from people you follow, with the best replies underneath: people you know first, then the most popular. Tap any post to see its photos, link summary and every reply on the right. The small glowing dot on each post tells you why it is there.'),
-          btn('Start reading', { class: 'btn p' }, function () { tell('feed.onboarded'); wrap.remove(); go('circle'); })]);
-      }
-    }
-    draw();
   }
 
   var started = false;
   function init(d) {
-    S.me = d.me; S.weights = R.weights(d.tune || R.DEFAULTS); S.version = d.version || (d.me && d.me.version); S.askLikes = d.askLikes !== false; if (d.wallet) S.wallet = d.wallet; setSplit(d.split || 0);
+    if (d.news) Object.assign(S.news, d.news); S.me = d.me; S.weights = R.weights(d.tune || R.DEFAULTS); S.version = d.version || (d.me && d.me.version); S.askLikes = d.askLikes !== false; if (d.wallet) S.wallet = d.wallet; setSplit(d.split || 0);
     document.documentElement.dataset.theme = d.theme || 'light';
     if (!d.me || !d.me.signedIn) return;
     if (S.me.profile) S.profiles[S.me.owner] = S.me.profile;
-    if (!started) { started = true; render(); if (!d.onboarded) onboarding(); }
+    if (!started) { started = true; render(); if (!d.onboarded) need('signal').then(function (m) { m.onboarding(); }, failed); }
   }
+  // The kit the section files use.
+  var K = { V: V, need: need, newsSave: newsSave, storyPrefs: storyPrefs, toggleSite: toggleSite, zapSheet: zapSheet, openReader: openReader, NS: NS, R: R, S: S, act: act, add: add, ago: ago, articleCard: articleCard, avatar: avatar, btn: btn, clear: clear, fmt: fmt, go: go, h: h, icon: icon, lay: lay, like: like, linkCard: linkCard, liveCard: liveCard, load: load, modal: modal, noteCard: noteCard, openModal: openModal, patch: patch, prof: prof, ranked: ranked, render: render, renderPanel: renderPanel, richText: richText, root: root, rpc: rpc, sec: sec, sharedLine: sharedLine, signalPill: signalPill, siteHue: siteHue, story: story, storyCard: storyCard, tell: tell, toast: toast, viaLine: viaLine, videoCard: videoCard, who: who };
   tell('feed.ready');
 })();

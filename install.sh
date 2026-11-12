@@ -50,6 +50,7 @@ for f in VERSION web/index.html web/napplet.html web/napplet.js web/shell.js web
          service/package.json service/package-lock.json service/src/server.mjs service/src/eventdb.mjs service/src/schema.mjs service/src/compact.mjs service/src/links.mjs; do
   [[ -f "$SRC/$f" && ! -L "$SRC/$f" ]] || die "missing or symlinked $f"
 done
+for f in "$SRC"/web/sec-*.js; do [[ -f "$f" && ! -L "$f" ]] || die "missing or symlinked napplet part ${f#$SRC/}"; done
 VERSION="$(head -c 32 "$SRC/VERSION" | tr -d '[:space:]')"
 [[ "$VERSION" =~ ^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$ ]] || die "invalid VERSION '$VERSION'"
 grep -q "v${VERSION}" "$SRC/web/index.html" || die "web/index.html does not show v${VERSION}"
