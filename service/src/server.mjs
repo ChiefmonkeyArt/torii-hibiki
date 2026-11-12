@@ -6,7 +6,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { EventStore } from 'applesauce-core';
-import { HibikiEventDatabase } from './eventdb.mjs';
+import { HibikiEventDatabase, withDeletions } from './eventdb.mjs';
 import { loadConfig } from './config.mjs';
 import { makeSigner } from './signer.mjs';
 import { makeCache } from './imgcache.mjs';
@@ -27,6 +27,7 @@ export function createApp(cfg, deps = {}) {
   fs.mkdirSync(cfg.dataDir, { recursive: true, mode: 0o700 });
   const db = deps.db || new HibikiEventDatabase(path.join(cfg.dataDir, 'events.db'));
   const store = deps.store || new EventStore({ database: db });
+  if (!deps.store) { const d = withDeletions(store); if (d.replayed) log('store', `${d.replayed} deletions replayed`); }
   const signer = makeSigner(cfg.secret, cfg.basePath);
   const cache = makeCache(path.join(cfg.dataDir, 'cache'), cfg.imgCacheBytes);
   const imager = deps.imager ? Promise.resolve(deps.imager) : loadImager(cfg.imgBackend, log);

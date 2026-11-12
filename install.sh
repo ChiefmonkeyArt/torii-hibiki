@@ -47,7 +47,7 @@ envval() { [[ -f "$2" ]] && sed -n "s/^$1=//p" "$2" | tail -n1 | tr -d "\"' \r" 
 
 # ---- preflight -------------------------------------------------------------
 for f in VERSION web/index.html web/napplet.html web/napplet.js web/shell.js web/rank.js web/wallet.js web/nwc.js \
-         service/package.json service/package-lock.json service/src/server.mjs service/src/eventdb.mjs service/src/compact.mjs; do
+         service/package.json service/package-lock.json service/src/server.mjs service/src/eventdb.mjs service/src/schema.mjs service/src/compact.mjs; do
   [[ -f "$SRC/$f" && ! -L "$SRC/$f" ]] || die "missing or symlinked $f"
 done
 VERSION="$(head -c 32 "$SRC/VERSION" | tr -d '[:space:]')"

@@ -9,6 +9,7 @@ import { lastValueFrom, toArray, timeout, catchError, of } from 'rxjs';
 
 export const CONTENT_KINDS = [1, 6, 20, 21, 22, 30023, 9802, 30311, 30004];
 export const ENGAGE_KINDS = [7, 6, 9735];
+export const DELETE_DAYS = 90; // kind 5 outlives anything it can delete (ADR-0004)
 const HOUR = 3600;
 const QUOTE = /nostr:(note1[02-9ac-hj-np-z]{58}|nevent1[02-9ac-hj-np-z]+)/g;
 
@@ -112,7 +113,7 @@ export function makeIngest({ cfg, store, log = () => {} }) {
     state.relaysUsed = plan.size;
     let n = 0;
     await Promise.all([...plan].map(async ([relay, who]) => {
-      for (const part of chunk(who, 250)) n += keep(await req([relay], [{ kinds: CONTENT_KINDS, authors: part, since, limit: 500 }]));
+      for (const part of chunk(who, 250)) n += keep(await req([relay], [{ kinds: CONTENT_KINDS, authors: part, since, limit: 500 }, { kinds: [5], authors: part, since, limit: 500 }]));
     }));
     // Explore: recent original posts from the strongest 2-hop accounts.
     const explore = [...graph.hop2.keys()].slice(0, 150);
@@ -123,7 +124,7 @@ export function makeIngest({ cfg, store, log = () => {} }) {
     // Engagement on recent roots.
     const ids = store.getByFilters({ kinds: [1, 20, 21, 22, 30023], since: now - 48 * HOUR }).map((e) => e.id);
     const engRelays = [primary, ...[...plan.keys()].slice(0, 6)];
-    for (const part of chunk(ids, 150)) n += keep(await req(engRelays, [{ kinds: [...ENGAGE_KINDS, 1], '#e': part, since: now - 72 * HOUR, limit: 2000 }]));
+    for (const part of chunk(ids, 150)) n += keep(await req(engRelays, [{ kinds: [...ENGAGE_KINDS, 1, 5], '#e': part, since: now - 72 * HOUR, limit: 2000 }]));
     // Quoted notes (nostr:note / nevent) so quote cards can render.
     const want = new Set();
     for (const e of store.getByFilters({ kinds: [1], since: now - 48 * HOUR })) for (const m of (e.content || '').matchAll(QUOTE)) {
@@ -136,8 +137,12 @@ export function makeIngest({ cfg, store, log = () => {} }) {
   }
 
   function prune() {
-    const until = Math.floor(Date.now() / 1000) - cfg.retainDays * 86400;
-    try { store.database?.removeByFilters?.({ kinds: [...CONTENT_KINDS, ...ENGAGE_KINDS], until }); } catch (e) { log('prune', e.message); }
+    const now = Math.floor(Date.now() / 1000), db = store.database;
+    try {
+      db?.removeByFilters?.({ kinds: [...CONTENT_KINDS, ...ENGAGE_KINDS], until: now - cfg.retainDays * 86400 });
+      db?.pruneEngagement?.(now - (cfg.engageDays ?? cfg.retainDays) * 86400, cfg.owner);
+      db?.removeByFilters?.({ kinds: [5], until: now - DELETE_DAYS * 86400 });
+    } catch (e) { log('prune', e.message); }
   }
 
   async function tick() {
@@ -167,7 +172,7 @@ export function makeIngest({ cfg, store, log = () => {} }) {
   /** On-demand: a person's profile, relay list and recent posts, for their profile page. */
   async function fetchAuthor(pk) {
     const relays = [primary, ...(graph.outbox.get(pk) || writeRelays(store.getReplaceable(10002, pk))).slice(0, 4), ...cfg.indexRelays];
-    keep(await req(relays.slice(0, 8), [{ kinds: [0, 10002], authors: [pk] }, { kinds: [1, 6, 20, 21, 22, 30023], authors: [pk], limit: 60 }], 5000));
+    keep(await req(relays.slice(0, 8), [{ kinds: [0, 10002], authors: [pk] }, { kinds: [1, 6, 20, 21, 22, 30023], authors: [pk], limit: 60 }, { kinds: [5], authors: [pk], limit: 100 }], 5000));
   }
   async function fetchProfile(pk) {
     if (!store.getReplaceable(0, pk)) keep(await req([primary, ...cfg.indexRelays], [{ kinds: [0], authors: [pk] }], 4000));
@@ -211,7 +216,7 @@ export function makeIngest({ cfg, store, log = () => {} }) {
 
   let timer = null;
   return {
-    graph, state, tick, fetchThread, fetchEvent, fetchAuthor, fetchProfile, fetchWallet, query, publish, nwcTransport,
+    graph, state, tick, prune, fetchThread, fetchEvent, fetchAuthor, fetchProfile, fetchWallet, query, publish, nwcTransport,
     start() { tick(); timer = setInterval(tick, cfg.syncMinutes * 60000); timer.unref?.(); },
     stop() { clearInterval(timer); },
   };

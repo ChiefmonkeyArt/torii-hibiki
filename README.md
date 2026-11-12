@@ -2,7 +2,7 @@
 
 **What resonates with you.** Hibiki is a personal Nostr discovery feed. It's a standalone Torii napplet that finds people and posts beyond your circle, tuned to your own taste and humour. Torii nodes cooperate to score spam, and their scores are signed and advisory.
 
-Status: **v0.2.10, first working feed.** Your circle's original posts, news, video, audio and long reads, gathered by your own node and ranked in your browser. Replies from everyone line up under each post (people you know first, then the most popular), videos show preview frames and play in a big player with the post, actions and replies beside them, and news links get a free TL;DR picked from the article by your node (no AI, no sats). Connect a Nostr Wallet Connect wallet and a tap on the bolt zaps 21 sats, with a 3 second Undo and limits you set. Images and links come through your node, so outside hosts never see you reading.
+Status: **v0.2.11, first working feed.** Your circle's original posts, news, video, audio and long reads, gathered by your own node and ranked in your browser. Replies from everyone line up under each post (people you know first, then the most popular), videos show preview frames and play in a big player with the post, actions and replies beside them, and news links get a free TL;DR picked from the article by your node (no AI, no sats). Connect a Nostr Wallet Connect wallet and a tap on the bolt zaps 21 sats, with a 3 second Undo and limits you set. Images and links come through your node, so outside hosts never see you reading.
 
 ## Documents
 
@@ -31,7 +31,7 @@ Status: **v0.2.10, first working feed.** Your circle's original posts, news, vid
 Needs Node 22.13+ with npm. On CPUs without x86-64-v2 support (some older or emulated VPS CPUs) the installer also installs `libvips-tools` for image resizing.
 
 ```bash
-cd ~/torii-hibiki 2>/dev/null || { git clone https://github.com/ChiefmonkeyArt/torii-hibiki.git ~/torii-hibiki && cd ~/torii-hibiki; }; git fetch --tags && git checkout v0.2.10 && sudo ./install.sh && curl -s https://chiefmonkey.art/hibiki/api/health
+cd ~/torii-hibiki 2>/dev/null || { git clone https://github.com/ChiefmonkeyArt/torii-hibiki.git ~/torii-hibiki && cd ~/torii-hibiki; }; git fetch --tags && git checkout v0.2.11 && sudo ./install.sh && curl -s https://chiefmonkey.art/hibiki/api/health
 ```
 
 The installer finds your npub from the Torii Suite or Continuum settings (or pass it: `sudo ./install.sh npub1...`). It installs the release to `/apps/hibiki/`, creates the `hibiki` user, `/etc/hibiki/hibiki.env` and `/var/lib/hibiki`, installs the sandboxed `hibiki-feed` service, writes `/opt/torii/nginx-fragments/hibiki.conf`, validates nginx, health-checks the service (rolling everything back on failure) and registers the **Hibiki** launcher card.
@@ -49,6 +49,8 @@ node tools/dev-server.mjs   # http://127.0.0.1:8790/hibiki/
 ```
 
 `HIBIKI_DEV=1` skips sign-in for loopback requests only. Never set it on a server.
+
+Storage windows: `HIBIKI_RETAIN_DAYS` (default 14) for posts and engagement, and `HIBIKI_ENGAGE_DAYS` (default 7) for other people's reactions, reposts and zap receipts; engagement by or about you keeps the longer window. NIP-09 deletions are honoured and kept 90 days (ADR-0004).
 
 ## Test
 

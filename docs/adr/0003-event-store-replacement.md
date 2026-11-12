@@ -1,6 +1,6 @@
 # ADR-0003: One stored version per replaceable event, and a one-off store compaction
 
-- **Status:** Accepted (2026-11-11; shipped in v0.2.8; amended in v0.2.9: no backup; v0.2.10 removes the backup clean-up code)
+- **Status:** Accepted (2026-11-11; shipped in v0.2.8; amended in v0.2.9: no backup; v0.2.10 removes the backup clean-up code; the "Later" options were decided in [ADR-0004](0004-lean-event-store.md), v0.2.11)
 - **Applies to:** the feed service's event store (`/var/lib/hibiki/events.db`) and the installer's release retention.
 - **Relates to:** ADR-0001 (Applesauce v7 and `applesauce-sqlite` on the node), ADR-0002 (owner-approved deploys).
 
@@ -75,9 +75,9 @@ v0.2.8 took a checked `VACUUM INTO` copy before compacting; on chiefmonkey.art t
 - v0.2.9 deleted the v0.2.8 copy on chiefmonkey.art (921.4 MB freed, 2026-11-12). v0.2.10 removes that clean-up code, so `compact.mjs` has no backup code at all. Another operator who installed v0.2.8 can delete the copy with `sudo rm -rf /var/lib/hibiki/backups`.
 - If a compaction fails part-way, the worst case is a store that has to refill from relays. The delete is one transaction and VACUUM is atomic, so in practice the store stays as it was.
 
-## Later (options, not decided)
+## Later (options, now decided in ADR-0004)
 
 - **`event_tags` stored three times:** the table, its primary-key index (event_id, tag_name, tag_value) and `event_tags_name_value_event_idx` (tag_name, tag_value, event_id) hold the same columns. A `WITHOUT ROWID` table keyed on (tag_name, tag_value, event_id) with a small event_id index could save about 150–200 MB at today's size. This needs a schema migration that the upstream library does not know about.
 - **Time limits for other people's engagement:** posts and engagement already share the `HIBIKI_RETAIN_DAYS` prune (`ingest.mjs`, by `created_at`). Other people's reactions (kind 7, about 63,000 rows), reposts (6, 16) and zap receipts (9735) could get a shorter window of their own, keeping the owner's own.
 - **NIP-09 deletions:** deleted events stay in SQLite for the same `remove(event)` reason. Removing them is a retention change and needs its own decision.
-- **Upstream:** report `remove(event)` against `applesauce-sqlite` / `applesauce-core`.
+- **Upstream:** report `remove(event)` against `applesauce-sqlite` / `applesauce-core`. Filed as [applesauce #122](https://github.com/hzrd149/applesauce/issues/122).
