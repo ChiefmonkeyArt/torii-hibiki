@@ -14,6 +14,7 @@ import { makeProxies } from './proxy.mjs';
 import { loadImager } from './imaging.mjs';
 import { makeIngest } from './ingest.mjs';
 import { makeFeed } from './feed.mjs';
+import { makeLinks } from './links.mjs';
 import { verifyNip98, checkPublish } from './auth.mjs';
 import { FetchError } from './safefetch.mjs';
 import { makeNwc } from './nwc.mjs';
@@ -35,7 +36,8 @@ export function createApp(cfg, deps = {}) {
   imager.then((i) => { imgBackend = i.name; log('imaging', `image backend: ${i.name}`); }, (e) => log('imaging', e.message));
   const proxies = makeProxies({ signer, cache, imager, log });
   const ingest = deps.ingest || makeIngest({ cfg, store, log });
-  const feed = makeFeed({ cfg, store, ingest, signer });
+  const links = deps.links || makeLinks({ fetchMeta: proxies.link, log });
+  const feed = makeFeed({ cfg, store, ingest, signer, links });
   const zaps = makeZaps({ cfg, ingest, store, get: deps.zapGet });
   const nwc = makeNwc({ transport: ingest.nwcTransport });
   const seen = new Map();
@@ -160,6 +162,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const app = createApp(cfg);
   app.server.listen(cfg.port, cfg.host, () => console.log(`hibiki-feed v${VERSION} on ${cfg.host}:${cfg.port}${cfg.dev ? ' (DEV auth bypass)' : ''}`));
   app.ingest.start();
+  // Read newly shared links in the background so News is sorted before it is opened (ADR-0005).
+  const warm = () => { try { app.feed.warmLinks(); } catch (e) { console.log('links warm', e.message); } };
+  setTimeout(warm, 90000).unref();
+  setInterval(warm, cfg.syncMinutes * 60000).unref();
   const memTimer = setInterval(() => { try { app.store.memory?.prune?.(); } catch {} }, 60000); memTimer.unref();
   for (const s of ['SIGTERM', 'SIGINT']) process.on(s, () => { app.close(); process.exit(0); });
 }

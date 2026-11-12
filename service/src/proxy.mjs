@@ -56,9 +56,18 @@ export function makeProxies({ signer, cache, imager, log = () => {} }) {
 
   /** Link preview: title, description, site, image (signed), from OpenGraph. */
   async function link(url) {
-    const key = `link2|${url}`;
+    const key = `link4|${url}`;
     const hit = await cache.get(key);
-    if (hit) return JSON.parse(hit.toString());
+    if (hit) return signed(JSON.parse(hit.toString()));
+    const yt = ytId(url);
+    if (yt) {
+      // YouTube serves the node a "browser deprecated" page; its oEmbed answer has the real title.
+      const { body } = await fetchBuffer(`https://www.youtube.com/oembed?format=json&url=https://www.youtube.com/watch?v=${yt}`, { cap: 64 * 1024, accept: 'application/json' });
+      const j = JSON.parse(body.toString('utf8'));
+      const out = { url, ogType: 'video.other', site: 'YouTube', title: clip(j.title, 200), description: clip(j.author_name, 120), image: `https://i.ytimg.com/vi/${yt}/hqdefault.jpg` };
+      await cache.put(key, Buffer.from(JSON.stringify(out)));
+      return signed(out);
+    }
     const { body, type, url: final } = await fetchBuffer(url, { cap: 1536 * 1024, accept: 'text/html,application/xhtml+xml' });
     if (!/text\/html|application\/xhtml/.test(type)) throw new FetchError('not html', 415);
     const html = body.toString('utf8');
@@ -66,12 +75,26 @@ export function makeProxies({ signer, cache, imager, log = () => {} }) {
     // Free extractive TL;DR from the page we already fetched (no AI, no third party).
     const sum = summarize(html, out.title);
     if (sum) { out.tldr = sum.tldr; out.readMinutes = out.readMinutes || sum.minutes; }
-    out.image = out.image ? signer.img(out.image, 640) : null;
     await cache.put(key, Buffer.from(JSON.stringify(out)));
-    return out;
+    return signed(out);
+  }
+
+  // The cache keeps raw addresses; signing at read time keeps previews valid if the secret changes.
+  function signed(o) {
+    return { ...o, image: o.image ? signer.img(o.image, 640) : null, icon: o.icon ? signer.img(o.icon, 96) : null };
   }
 
   return { img, media, link };
+}
+
+/** The video id of a YouTube address (watch, youtu.be, shorts, live, music), or null. */
+export function ytId(u) {
+  try {
+    const x = new URL(u), h = x.hostname.replace(/^(www|m|music)\./, '');
+    const id = h === 'youtu.be' ? x.pathname.slice(1).split('/')[0]
+      : h === 'youtube.com' ? (x.searchParams.get('v') || (x.pathname.match(/^\/(?:shorts|live|embed)\/([^/]+)/) || [])[1]) : null;
+    return id && /^[\w-]{11}$/.test(id) ? id : null;
+  } catch { return null; }
 }
 
 const clip = (s, n) => unent(String(s || '')).replace(/\s+/g, ' ').trim().slice(0, n);
@@ -90,7 +113,31 @@ export function parseOg(html, base) {
   try { image = image ? new URL(unent(image), base).toString() : ''; } catch { image = ''; }
   if (!image.startsWith('https://')) image = '';
   const words = Number(meta['twitter:data1']?.match(/(\d+)\s*min/)?.[1]) || null;
+  const abs = (u) => { try { const x = new URL(unent(u), base).toString(); return x.startsWith('https://') ? x : ''; } catch { return ''; } };
+  // <link rel=canonical>, else og:url: the page's own official address (links.mjs checks it is the same site).
+  let canonical = '', icon = '', iconRank = 9;
+  for (const m of head.matchAll(/<link\s+([^>]+?)\/?>/gi)) {
+    const a = {};
+    for (const p of m[1].matchAll(/([\w:-]+)\s*=\s*("([^"]*)"|'([^']*)')/g)) a[p[1].toLowerCase()] = p[3] ?? p[4];
+    const rel = (a.rel || '').toLowerCase().split(/\s+/);
+    if (!a.href) continue;
+    if (rel.includes('canonical') && !canonical) canonical = abs(a.href);
+    // Raster icons only (the image proxy re-encodes rasters); apple-touch-icon is usually a PNG.
+    const r = rel.includes('apple-touch-icon') ? 0 : rel.includes('icon') && /\.(png|jpe?g|webp)(\?|$)/i.test(a.href) ? 1 : 9;
+    if (r < iconRank) { iconRank = r; icon = abs(a.href); }
+  }
+  if (!canonical && meta['og:url']) canonical = abs(meta['og:url']);
+  const ld = [];
+  for (const m of html.slice(0, 600000).matchAll(/<script[^>]+application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi))
+    for (const t of m[1].matchAll(/"@type"\s*:\s*(\[[^\]]*\]|"[^"]*")/g))
+      for (const v of t[1].matchAll(/"([A-Za-z]+)"/g)) if (ld.length < 12 && !ld.includes(v[1])) ld.push(v[1]);
   return {
+    ogType: clip(meta['og:type'], 40),
+    canonical,
+    ld,
+    published: clip(meta['article:published_time'] || meta['og:article:published_time'] || '', 40) || null,
+    price: !!(meta['product:price:amount'] || meta['og:price:amount']),
+    icon,
     url: base,
     site: clip(meta['og:site_name'] || new URL(base).hostname.replace(/^www\./, ''), 60),
     title: clip(title, 200),
