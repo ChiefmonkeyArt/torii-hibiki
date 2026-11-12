@@ -254,7 +254,7 @@ if ! nginx -t >/dev/null 2>&1; then nginx -t || true; rollback "nginx -t failed"
 
 # ---- compact the event store (ADR-0003) ---------------------------------------
 # Removes replaced versions of replaceable/addressable events left by v0.2.7 and
-# earlier, and the v0.2.8 backup copy in ${DATA_DIR}/backups. Needs the service
+# earlier (no backup: the store is a relay cache). Needs the service
 # stopped; a no-op once clean. A failure is logged and the deploy carries on.
 if [[ -f "${DATA_DIR}/events.db" ]]; then
   systemctl stop "$UNIT" 2>/dev/null || true

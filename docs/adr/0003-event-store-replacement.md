@@ -1,6 +1,6 @@
 # ADR-0003: One stored version per replaceable event, and a one-off store compaction
 
-- **Status:** Accepted (2026-11-11; shipped in v0.2.8; amended in v0.2.9: no backup)
+- **Status:** Accepted (2026-11-11; shipped in v0.2.8; amended in v0.2.9: no backup; v0.2.10 removes the backup clean-up code)
 - **Applies to:** the feed service's event store (`/var/lib/hibiki/events.db`) and the installer's release retention.
 - **Relates to:** ADR-0001 (Applesauce v7 and `applesauce-sqlite` on the node), ADR-0002 (owner-approved deploys).
 
@@ -72,7 +72,7 @@ The installer keeps the current release plus one spare (`KEEP_RELEASES=2`, previ
 v0.2.8 took a checked `VACUUM INTO` copy before compacting; on chiefmonkey.art that was 921 MB. The owner pointed out that `events.db` is a cache: everything in it comes from relays, and a fresh install fills it again. The code lives on GitHub and ngit, and the owner's own events (including the wallet record, kind 30078) live on their relays. So the copy protected nothing that cannot be fetched again, and it cost about as much disk as the store itself.
 
 - `compact.mjs` no longer takes a backup, and needs only twice the file size plus 256 MB free.
-- On every run, including when the store is already clean, it deletes the v0.2.8 copies (`<data>/backups/events-<UTC>.db` and any journal), then removes the folder if it is empty. Other files are left alone.
+- v0.2.9 deleted the v0.2.8 copy on chiefmonkey.art (921.4 MB freed, 2026-11-12). v0.2.10 removes that clean-up code, so `compact.mjs` has no backup code at all. Another operator who installed v0.2.8 can delete the copy with `sudo rm -rf /var/lib/hibiki/backups`.
 - If a compaction fails part-way, the worst case is a store that has to refill from relays. The delete is one transaction and VACUUM is atomic, so in practice the store stays as it was.
 
 ## Later (options, not decided)
