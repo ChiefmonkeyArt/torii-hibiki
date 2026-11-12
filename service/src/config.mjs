@@ -44,6 +44,7 @@ export function loadConfig(env = process.env) {
     imgBackend: ['auto', 'sharp', 'vips', 'copy'].includes(env.HIBIKI_IMG_BACKEND) ? env.HIBIKI_IMG_BACKEND : 'auto',
     imgCacheBytes: Number(env.HIBIKI_IMG_CACHE_MB || 512) * 1024 * 1024,
     retainDays: Number(env.HIBIKI_RETAIN_DAYS || 14),
+    engageDays: Number(env.HIBIKI_ENGAGE_DAYS || 7), // others' reactions, reposts, zap receipts (ADR-0004)
     syncMinutes: Number(env.HIBIKI_SYNC_MINUTES || 5),
     maxOutboxRelays: Number(env.HIBIKI_MAX_RELAYS || 24),
     dev, // dev: skips NIP-98 login on loopback; never set on a VPS

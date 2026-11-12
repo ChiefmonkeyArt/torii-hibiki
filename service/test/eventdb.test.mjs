@@ -32,12 +32,17 @@ test('root cause: upstream store keeps replaced versions in SQLite (remove() is 
 
 test('a newer replaceable event replaces the old one and its tag rows, through the event store', () => {
   const { db, store } = setup();
-  const old = mk(3, 100, [P('a'), P('b')]), neu = mk(3, 200, [P('c')]);
+  const old = mk(10002, 100, [['r', 'wss://a.example'], ['r', 'wss://b.example']]), neu = mk(10002, 200, [['r', 'wss://c.example']]);
   store.add(old); store.add(neu);
   assert.deepEqual(rows(db, 'SELECT id FROM events').map((r) => r.id), [neu.id]);
   assert.equal(n(db, 'SELECT count(*) FROM event_tags WHERE event_id = ?', old.id), 0);
   assert.equal(n(db, 'SELECT count(*) FROM event_tags WHERE event_id = ?', neu.id), 1);
-  assert.equal(store.getReplaceable(3, neu.pubkey).id, neu.id);
+  assert.equal(store.getReplaceable(10002, neu.pubkey).id, neu.id);
+  const f1 = mk(3, 100, [P('a'), P('b')]), f2 = mk(3, 200, [P('c')]);
+  store.add(f1); store.add(f2);
+  assert.equal(store.getReplaceable(3, f2.pubkey).id, f2.id);
+  assert.equal(n(db, 'SELECT count(*) FROM events WHERE kind = 3'), 1);
+  assert.equal(n(db, 'SELECT count(*) FROM event_tags'), 1, 'follow lists get no tag rows (ADR-0004)');
 });
 
 test('an older version arriving later is ignored', () => {
@@ -105,7 +110,8 @@ test('compaction removes only replaced versions and orphan tags, takes no backup
     const r = compact(file, { log });
     assert.equal(r.done, true);
     assert.deepEqual(r.removed.byKind, { 0: 2, 3: 4, 30023: 1 });
-    assert.equal(r.removed.events, 7); assert.equal(r.removed.tags, 4 * 3 + 1, 'kind-3 p tags plus the old article d tag'); assert.equal(r.removed.orphanTags, 1);
+    assert.equal(r.removed.events, 7); assert.equal(r.removed.tags, 1, 'the old article d tag (follow-list rows went with the migration)'); assert.equal(r.removed.orphanTags, 0);
+    assert.deepEqual(r.migration, { migrated: true, kept: 4 + 3, dropped: 5 * 3 + 1 + 1 }, 'kept: 4 note p + 3 article d; dropped: follow-list p rows (5x3 + 1) and the orphan');
     assert.equal(r.before.events - r.after.events, 7);
     assert.ok(r.after.bytes <= r.before.bytes);
     const db = new DatabaseSync(file);

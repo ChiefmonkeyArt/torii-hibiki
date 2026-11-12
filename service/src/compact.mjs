@@ -1,9 +1,10 @@
 // compact.mjs — one-off (and safe to re-run) cleanup of the node's event store
-// (ADR-0003). Removes replaced versions of replaceable and addressable events,
-// and any tag rows whose event is gone, then VACUUMs. Nothing else is dropped.
-// Steps: measure -> nothing to do? stop -> check free
-// disk -> delete in one transaction -> VACUUM -> report. No backup: the store
-// is a cache of relay events and refills itself (ADR-0003).
+// (ADR-0003, ADR-0004). Moves the tag table to the lean layout (one copy per
+// row, no follow-list rows), removes replaced versions of replaceable and
+// addressable events and any tag rows whose event is gone, then VACUUMs.
+// Steps: measure -> nothing to do? stop -> check free disk -> migrate tags ->
+// delete in one transaction -> VACUUM -> report. No backup: the store is a
+// cache of relay events and refills itself (ADR-0003).
 // Run with the service stopped (install.sh does this):
 //   node src/compact.mjs /var/lib/hibiki/events.db
 // GPL-3.0-or-later.
@@ -11,6 +12,7 @@ import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isLean, prepareSchema } from './schema.mjs';
 
 const MB = 1024 * 1024;
 const BETTER = 'w.kind = e.kind AND w.pubkey = e.pubkey AND (w.created_at > e.created_at OR (w.created_at = e.created_at AND w.id < e.id))';
@@ -55,15 +57,20 @@ export function compact(file, { log = console.log, minFreeSlack = 256 * MB, free
   const db = new DatabaseSync(file);
   try {
     db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 10000');
-    const m = measure(db);
+    const lean = isLean(db), m = measure(db);
     Object.assign(before, { events: m.events, tags: m.tags });
-    log(`compact: ${fmt(before.bytes)}, ${m.events} events, ${m.tags} tag rows, ${fmt(before.free)} free; replaced versions ${m.stale} (${m.staleTags} tag rows) ${JSON.stringify(m.byKind)}, orphan tag rows ${m.orphanTags}, free pages ${fmt(m.freePages)}`);
-    if (!m.stale && !m.orphanTags && m.freePages < 32 * MB) { log('compact: nothing to do'); return { done: false, reason: 'clean', before }; }
-    // VACUUM's temporary copy + rollback journal, each at most the file size.
+    log(`compact: ${fmt(before.bytes)}, ${m.events} events, ${m.tags} tag rows${lean ? '' : ' (old tag layout)'}, ${fmt(before.free)} free; replaced versions ${m.stale} (${m.staleTags} tag rows) ${JSON.stringify(m.byKind)}, orphan tag rows ${m.orphanTags}, free pages ${fmt(m.freePages)}`);
+    if (lean && !m.stale && !m.orphanTags && m.freePages < 32 * MB) { log('compact: nothing to do'); return { done: false, reason: 'clean', before }; }
+    // VACUUM's temporary copy + rollback journal (or the new tag table), each at most the file size.
     const need = before.bytes * 2 + minFreeSlack;
     if (before.free < need) {
       log(`compact: skipped, needs ${fmt(need)} free and only ${fmt(before.free)} is available; nothing changed`);
       return { done: false, reason: 'disk', before, need };
+    }
+    let migration = {};
+    if (!lean) {
+      migration = prepareSchema(db);
+      log(`compact: tag table moved to one copy per row; kept ${migration.kept} tag rows, dropped ${migration.dropped} (follow lists and orphans)`);
     }
     db.exec('BEGIN IMMEDIATE');
     let staleTags, orphanTags, stale;
@@ -78,7 +85,7 @@ export function compact(file, { log = console.log, minFreeSlack = 256 * MB, free
     const after = { bytes: size(file), free: freeSpace(path.dirname(file)), events: one(db, 'SELECT count(*) FROM events'), tags: one(db, 'SELECT count(*) FROM event_tags') };
     log(`compact: removed ${stale} replaced versions ${JSON.stringify(m.byKind)}, ${staleTags} of their tag rows and ${orphanTags} orphan tag rows`);
     log(`compact: ${fmt(before.bytes)} -> ${fmt(after.bytes)}; events ${before.events} -> ${after.events}; tag rows ${before.tags} -> ${after.tags}; free ${fmt(before.free)} -> ${fmt(after.free)}`);
-    return { done: true, before, after, removed: { events: stale, byKind: m.byKind, tags: staleTags, orphanTags } };
+    return { done: true, before, after, migration, removed: { events: stale, byKind: m.byKind, tags: staleTags, orphanTags } };
   } finally { db.close(); }
 }
 

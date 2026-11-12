@@ -244,7 +244,7 @@ t('installer: compacts the event store with the service stopped, before the flip
   assert.ok(test > 0 && stop > test && run > stop && flip > run, 'nginx -t, stop, compact, then flip');
   assert.match(sh, /runuser -u "\$SVC_USER" -- env SQLITE_TMPDIR="\$DATA_DIR"/, 'runs as the service user, temp files on the data disk');
   assert.match(sh, /warning: event store compaction failed; continuing/, 'a failed compaction does not break the deploy');
-  for (const f of ['service/src/eventdb.mjs', 'service/src/compact.mjs']) assert.ok(sh.includes(f), `preflight lists ${f}`);
+  for (const f of ['service/src/eventdb.mjs', 'service/src/schema.mjs', 'service/src/compact.mjs']) assert.ok(sh.includes(f), `preflight lists ${f}`);
   assert.ok(!/VACUUM INTO|backups/.test(read('service/src/compact.mjs')), 'no backup code: the store is a relay cache (ADR-0003)');
 });
 t('feed service keeps one version per replaceable slot (ADR-0003)', () => {
@@ -282,6 +282,17 @@ t('ADR-0001 is accepted at rev 4 and the event model is accepted', () => {
 t('node_modules and local data are never committed', () => {
   const gi = read('.gitignore');
   assert.match(gi, /node_modules\//); assert.match(gi, /\*\.db/);
+});
+t('lean event store: one tag copy, deletions honoured, engagement window (ADR-0004)', () => {
+  assert.ok(fs.existsSync(path.join(ROOT, 'docs/adr/0004-lean-event-store.md')), 'ADR-0004');
+  const schema = read('service/src/schema.mjs');
+  assert.match(schema, /WITHOUT ROWID/); assert.match(schema, /WHERE 0/, 'placeholder index');
+  const server = read('service/src/server.mjs');
+  assert.match(server, /withDeletions\(store\)/, 'the live store honours NIP-09');
+  assert.match(read('service/src/config.mjs'), /HIBIKI_ENGAGE_DAYS/);
+  // Follow lists have no tag rows, so nothing may query them by tag.
+  for (const f of fs.readdirSync(path.join(ROOT, 'service/src')))
+    assert.ok(!/kinds:\s*\[[^\]]*\b3\b[^\]]*\][^}]*'#/.test(read('service/src/' + f)), `${f} queries kind 3 by tag`);
 });
 
 console.log(`\n${passed} passed`);
