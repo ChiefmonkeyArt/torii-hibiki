@@ -81,6 +81,8 @@ export function makeProxies({ signer, cache, imager, log = () => {} }) {
 
   // The cache keeps raw addresses; signing at read time keeps previews valid if the secret changes.
   function signed(o) {
+    // unent here too, so previews cached before the Latin-1 names were added also read right.
+    for (const k of ['title', 'description', 'site']) if (typeof o[k] === 'string' && o[k].includes('&')) o[k] = unent(o[k]);
     return { ...o, image: o.image ? signer.img(o.image, 640) : null, icon: o.icon ? signer.img(o.icon, 96) : null };
   }
 

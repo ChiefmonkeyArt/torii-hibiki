@@ -99,7 +99,7 @@ Hibiki uses [Applesauce](https://github.com/hzrd149/applesauce) v7 (MIT, GPL-com
 - **Trust stays ours:** Applesauce only fetches, stores and parses. Hibiki's own checks still run on every event: mutual service bindings, quorum rules, the no-laundering rule and consent gates.
 - **The napplet doesn't bundle Applesauce:** it has no network access, so it receives snapshots from the shell. That keeps it small.
 - **Pinned and wrapped:** exact versions, matching Quest's pins where they overlap, behind one thin adapter file each in the shell and the service, so a major upstream release costs one file.
-- **Size budget, enforced in tests:** shell Applesauce chunks ≤ 60 KB gzip (Quest measured 52 KB). Napplet bundle ≤ 150 KB gzip, with Applesauce excluded.
+- **Size budget, enforced in tests:** shell Applesauce chunks ≤ 60 KB gzip (Quest measured 52 KB). Napplet bundle ≤ 150 KB gzip, with Applesauce excluded. The working budget is tighter, see ADR-0006: first load ≤ 32 KB, each section file ≤ 8 KB, all napplet files ≤ 42 KB.
 
 ### 9. Revision 4: content first, and the P1 boundaries as built
 

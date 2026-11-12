@@ -186,4 +186,6 @@ test('TL;DR: free extractive summary from article text', () => {
   const ld = `<script type="application/ld+json">${JSON.stringify({ '@type': 'NewsArticle', articleBody: body.concat(body).join(' ') })}</script><p>Cookie banner text only.</p>`;
   assert.match(articleText(ld).join(' '), /community workshop/, 'JSON-LD articleBody preferred');
   assert.equal(unent('Fish &amp; chips &#8211; &quot;good&quot;'), 'Fish & chips \u2013 "good"');
+  // Latin-1 names are case-sensitive; double-encoded names are unwrapped once; unknown names stay.
+  assert.equal(unent('Steuererh&amp;ouml;hungen &Ouml;l &eacute;t&eacute; &euro;5 &zzz;'), 'Steuererh\u00f6hungen \u00d6l \u00e9t\u00e9 \u20ac5 &zzz;');
 });

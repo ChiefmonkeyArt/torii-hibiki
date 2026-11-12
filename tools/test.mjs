@@ -24,7 +24,11 @@ const html = read('web/index.html'), napHtml = read('web/napplet.html');
 const pkg = JSON.parse(read('package.json')), svcPkg = JSON.parse(read('service/package.json'));
 const lock = JSON.parse(read('service/package-lock.json'));
 const sh = read('install.sh');
-const WEB_JS = ['web/shell.js', 'web/wallet.js', 'web/napplet.js', 'web/rank.js'];
+// The napplet is a core file plus parts loaded on first use (ADR-0006); its rules apply to all of them.
+const PART_FILES = fs.readdirSync(path.join(ROOT, 'web')).filter((f) => /^sec-[a-z]+\.js$/.test(f)).sort().map((f) => 'web/' + f);
+const NAP_FILES = ['web/napplet.js', ...PART_FILES];
+const readNap = () => NAP_FILES.map(read).join('\n');
+const WEB_JS = ['web/shell.js', 'web/wallet.js', ...NAP_FILES, 'web/rank.js'];
 const WEB_ALL = [...WEB_JS, 'web/index.html', 'web/napplet.html', 'web/shell.css', 'web/napplet.css', 'web/hibiki.css'];
 const metaCsp = (s) => s.match(/Content-Security-Policy" content="([^"]+)"/)?.[1] || '';
 // <meta> CSP cannot carry frame-ancestors or sandbox; the header adds them.
@@ -79,12 +83,12 @@ t('no HTML injection sinks or dynamic code in browser code', () => {
   for (const f of WEB_JS) assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function|setAttribute\(\s*['"]on/.test(read(f)), f);
 });
 t('napplet never touches the network or storage directly', () => {
-  const js = read('web/napplet.js');
+  const js = readNap();
   assert.ok(!/\bfetch\(|XMLHttpRequest|WebSocket|EventSource|sendBeacon|indexedDB|localStorage|document\.cookie/.test(js));
   assert.match(js, /postMessage/);
 });
 t('napplet only renders same-origin node paths as media sources', () => {
-  const js = read('web/napplet.js');
+  const js = readNap();
   assert.ok(js.includes("var PROXY = /^\\/hibiki\\/(img|media)\\/[\\w-]{22}\\//;"), 'PROXY guard');
   assert.match(js, /k === 'src' \|\| k === 'poster'\) \{ if \(PROXY\.test\(v\)\)/, 'h() drops any other src');
   assert.ok(!/\bhref\b/.test(js), 'no anchors: links open through the shell');
@@ -111,25 +115,30 @@ t('fonts are bundled with their OFL licence', () => {
   for (const f of ['noto-sans-regular.woff2', 'noto-sans-bold.woff2', 'noto-serif-jp-mark.woff2', 'OFL.txt']) assert.ok(fs.existsSync(path.join(ROOT, 'web/fonts', f)), f);
   assert.match(read('web/fonts/OFL.txt'), /SIL OPEN FONT LICENSE/i);
 });
-t('size budgets (gzip): shell <= 8 KB, wallet <= 6 KB + lazy crypto <= 28 KB, napplet <= 32 KB, fonts <= 64 KB', () => {
+t('size budgets (gzip, ADR-0006): shell <= 8 KB, wallet <= 6 KB + lazy crypto <= 28 KB, napplet first load <= 32 KB, each part <= 8 KB, napplet in all <= 42 KB, fonts <= 64 KB', () => {
   const wal = gz('web/wallet.js'), crypto = gz('web/nwc.js');
   console.log(`     wallet ${wal} B, wallet crypto (loaded on first use) ${crypto} B`);
   assert.ok(wal <= 6 * 1024, `wallet ${wal}`); assert.ok(crypto <= 28 * 1024, `nwc ${crypto}`);
   const shell = ['web/index.html', 'web/shell.js', 'web/shell.css'].reduce((a, f) => a + gz(f), 0);
-  const nap = ['web/napplet.html', 'web/napplet.js', 'web/rank.js', 'web/napplet.css', 'web/hibiki.css'].reduce((a, f) => a + gz(f), 0);
+  const first = ['web/napplet.html', 'web/napplet.js', 'web/rank.js', 'web/napplet.css', 'web/hibiki.css'].reduce((a, f) => a + gz(f), 0);
+  const parts = PART_FILES.map((f) => [f.slice(8, -3), gz(f)]);
+  const all = first + parts.reduce((a, p) => a + p[1], 0);
   const fonts = fs.readdirSync(path.join(ROOT, 'web/fonts')).filter((f) => f.endsWith('.woff2')).reduce((a, f) => a + fs.statSync(path.join(ROOT, 'web/fonts', f)).size, 0);
-  console.log(`     shell ${shell} B, napplet ${nap} B, fonts ${fonts} B`);
-  assert.ok(shell <= 8 * 1024, `shell ${shell}`); assert.ok(nap <= 32 * 1024, `napplet ${nap}`); assert.ok(fonts <= 64 * 1024, `fonts ${fonts}`);
+  console.log(`     shell ${shell} B, napplet first load ${first} B, in all ${all} B, fonts ${fonts} B`);
+  console.log(`     parts: ${parts.map((p) => p.join(' ')).join(', ')}`);
+  assert.ok(shell <= 8 * 1024, `shell ${shell}`); assert.ok(first <= 32 * 1024, `napplet first load ${first}`);
+  for (const [n, b] of parts) assert.ok(b <= 8 * 1024, `part ${n} ${b}`);
+  assert.ok(all <= 42 * 1024, `napplet in all ${all}`); assert.ok(fonts <= 64 * 1024, `fonts ${fonts}`);
 });
 t('replies and likes: no reply gating, in-place like, opt-out only for likes', () => {
-  const nap = read('web/napplet.js'), shell = read('web/shell.js');
+  const nap = readNap(), shell = read('web/shell.js');
   assert.ok(!/outside your circle/.test(nap) && !/showOthers/.test(nap), 'every reply is shown, no Show gate');
   assert.match(nap, /function patch\(it\)/); assert.ok(!/S\.liked\[it\.id\] = 1; render\(\)/.test(nap), 'liking does not re-render the page');
   assert.match(shell, /draft\.kind === 7 && store\.get\('skip7'/, 'only likes may skip the confirm dialog');
   assert.match(read('web/index.html'), /id="c-skipbox"/);
 });
 t('watch: preview frames are lazy and capped, the player keeps everything on screen', () => {
-  const nap = read('web/napplet.js'), css = read('web/napplet.css');
+  const nap = readNap(), css = read('web/napplet.css');
   assert.match(nap, /frameBusy < 3/, 'at most three preview frames load at once');
   assert.match(nap, /preload: 'metadata'.*'aria-hidden': 'true'/, 'preview frames load metadata only');
   const wm = nap.slice(nap.indexOf('function watchModal'), nap.indexOf('function liveCard'));
@@ -138,7 +147,7 @@ t('watch: preview frames are lazy and capped, the player keeps everything on scr
   assert.match(css, /\.pb>\*\{flex-shrink:0\}/);
 });
 t('zaps: owner confirms (or one-taps within their limits), shell checks every value the napplet sends', () => {
-  const shell = read('web/shell.js'), nap = read('web/napplet.js');
+  const shell = read('web/shell.js'), nap = readNap();
   const z = shell.slice(shell.indexOf('function zap(d)'), shell.indexOf('var INVOICE'));
   const za = z.slice(z.indexOf('function zapAsk('));
   assert.ok(za && /return ask\(\{/.test(za), 'a normal zap goes through the confirm dialog');
@@ -152,7 +161,7 @@ t('zaps: owner confirms (or one-taps within their limits), shell checks every va
   assert.ok(!/webln|window\.nostr/.test(nap), 'the napplet never reaches a wallet or signer itself');
 });
 t('one-tap zaps: shell owns the secret, the amount, the limits and the Undo (ADR-0001 9.4)', () => {
-  const shell = read('web/shell.js'), nap = read('web/napplet.js'), w = read('web/wallet.js'), html = read('web/index.html');
+  const shell = read('web/shell.js'), nap = readNap(), w = read('web/wallet.js'), html = read('web/index.html');
   assert.ok(!/walletconnect|secret|nip44|HibikiNWC/i.test(nap), 'the napplet never sees the wallet connection');
   assert.ok(html.indexOf('src="wallet.js"') > 0 && html.indexOf('src="wallet.js"') < html.indexOf('src="shell.js"'), 'wallet.js loads before shell.js');
   const one = w.slice(w.indexOf('function oneTap('), w.indexOf('// ---- settings dialog'));
@@ -180,7 +189,7 @@ t('wallet crypto bundle matches its source and pinned versions', () => {
   assert.equal(r.status, 0, r.stderr || r.stdout);
 });
 t('columns: draggable, remembered divider, hidden on phones', () => {
-  const nap = read('web/napplet.js'), css = read('web/napplet.css'), shell = read('web/shell.js');
+  const nap = readNap(), css = read('web/napplet.css'), shell = read('web/shell.js');
   assert.match(nap, /role: 'separator', 'aria-orientation': 'vertical'/);
   assert.match(nap, /ArrowLeft/); assert.match(nap, /dblclick/);
   assert.match(nap, /tell\('feed\.pref', \{ split: S\.split \}\)/);
@@ -189,7 +198,7 @@ t('columns: draggable, remembered divider, hidden on phones', () => {
   assert.match(css, /max-width:860px\)\{\.split\{display:none\}/);
 });
 t('conversation: names open profiles, Reply opens a form under that comment', () => {
-  const nap = read('web/napplet.js');
+  const nap = readNap();
   assert.match(nap, /function who\(pk/); assert.match(nap, /function personPage\(/);
   assert.match(nap, /function composer\(/); assert.match(nap, /myReplies/, 'your reply shows at once');
   assert.match(nap, /posted ' \+ \w+\.dup \+ ' times|dup \+ ' times/, 'collapsed duplicates are labelled');
@@ -302,7 +311,61 @@ t('news link quality: links read in the background, articles only, lead card (AD
   assert.match(links, /fetchMeta/, 'links go through the link proxy (safefetch), never a new fetch path');
   assert.ok(!/\bfetch\(/.test(links), 'links.mjs makes no direct requests');
   assert.match(proxy, /function signed\(/, 'previews are cached raw and signed when read');
-  assert.match(read('web/napplet.js'), /storyCard\(list\[0\], true\)/, 'News opens with a lead card');
+  assert.match(readNap(), /storyCard\(list\[0\], true\)/, 'News opens with a lead card');
+});
+t('napplet parts: fixed names, same-origin only, every name they use is defined (ADR-0006)', () => {
+  const core = read('web/napplet.js');
+  const names = core.match(/var PARTS = \{([^}]+)\}/)[1].match(/\w+(?=:)/g).sort();
+  assert.deepEqual(names, PART_FILES.map((f) => f.slice(8, -3)).sort(), 'PARTS lists exactly the sec-*.js files');
+  assert.equal((core.match(/createElement\('script'\)/g) || []).length, 1, 'one script loader');
+  assert.match(core, /if \(!PARTS\[n\]\) return Promise\.reject/, 'unknown names are refused');
+  assert.match(core, /el\.setAttribute\('src', 'sec-' \+ n \+ '\.js'\)/, 'relative, same-origin file names only');
+  assert.match(sh, /web\/sec-\*\.js/, 'the installer checks the part files');
+  const kit = core.match(/var K = \{([^}]+)\}/)[1];
+  const GLOBALS = new Set('Array Object Math Date Number String JSON Promise Error Boolean RegExp Set Map URL window document parent setTimeout clearTimeout setInterval clearInterval requestAnimationFrame encodeURIComponent decodeURIComponent parseInt parseFloat isNaN Intl navigator getComputedStyle IntersectionObserver HibikiNap function if for while switch return typeof catch new'.split(' '));
+  for (const f of PART_FILES) {
+    const src = read(f), name = f.slice(8, -3);
+    assert.match(src, new RegExp(`^HibikiNap\\.def\\('${name}', function \\(K\\) \\{`, 'm'), `${f} registers as ${name}`);
+    const hdr = src.split('\n').find((l) => /^  var .* = K\./.test(l)) || '';
+    const fromK = [...hdr.matchAll(/(\w+) = K\.(\w+)/g)];
+    for (const [, a, b] of fromK) { assert.equal(a, b); assert.ok(new RegExp(`\\b${b}: ${b}\\b`).test(kit), `${f}: K.${b} is in the kit`); }
+    const known = new Set([...fromK.map((m) => m[1]), ...[...src.matchAll(/\bfunction (\w+)|\bvar (\w+)|, (\w+) = /g)].map((m) => m[1] || m[2] || m[3])]);
+    const code = src.replace(/'(?:[^'\\\n]|\\.)*'/g, "''").replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/([=(,:!&|?]\s*)\/(?:[^/\\\n[]|\\.|\[(?:[^\]\\]|\\.)*\])+\/[gimsuy]*/g, '$1RE');
+    for (const m of code.matchAll(/(?<![\w.$])([A-Za-z_]\w*)\s*\(/g))
+      assert.ok(known.has(m[1]) || GLOBALS.has(m[1]), `${f} calls ${m[1]}, which it neither defines nor takes from the kit`);
+  }
+});
+
+// Pulls one top-level function out of a source file so its real behaviour can be run here.
+const fnSrc = (src, name) => { const i = src.indexOf(`function ${name}(`); assert.ok(i >= 0, `${name} exists`); let d = 0, j = src.indexOf('{', i); for (; j < src.length; j++) { if (src[j] === '{') d++; else if (src[j] === '}' && --d === 0) break; } return src.slice(i, j + 1); };
+t('news preferences: the shell keeps only well-formed, bounded values (v0.2.13)', () => {
+  const shell = read('web/shell.js');
+  assert.match(shell, /case 'feed\.news':[^\n]*store\.set\('news', newsPrefs\(/, 'saved through newsPrefs');
+  assert.match(shell, /news: store\.get\('news', null\)/, 'handed back on init');
+  const newsPrefs = new Function(fnSrc(shell, 'newsPrefs') + '; return newsPrefs;')();
+  const many = Array.from({ length: 150 }, (_, i) => `s${i}.com`);
+  const p = newsPrefs({ followsOnly: 'yes', sort: 'evil', hidden: ['ok.com', 'Bad Site', '<x>', 7, ...many], trusted: 'x', read: ['abcdefgh', 'no', 'x'.repeat(65)], seen: 1e12 });
+  assert.equal(p.followsOnly, false); assert.equal(p.sort, 'top');
+  assert.equal(p.hidden.length, 100); assert.ok(p.hidden.every((d) => /^[a-z0-9.-]{1,80}$/.test(d)));
+  assert.deepEqual(p.trusted, []); assert.deepEqual(p.read, ['abcdefgh']); assert.equal(p.seen, 0);
+  assert.deepEqual(newsPrefs({ followsOnly: true, sort: 'latest', seen: 1700000000.7 }), { followsOnly: true, sort: 'latest', hidden: [], trusted: [], read: [], seen: 1700000000 });
+});
+t('news preferences: hidden sites go, follows-only filters, trusted sites get the rank flag (v0.2.13)', () => {
+  const core = read('web/napplet.js');
+  const mk = (S) => new Function('S', fnSrc(core, 'storyPrefs') + '; return storyPrefs;')(S);
+  const list = () => [{ domain: 'a.com', inCircle: 1, f: {} }, { domain: 'b.com', inCircle: 0, f: {} }, { domain: 'c.com', inCircle: 2, f: {} }];
+  const S = { news: { hidden: ['c.com'], trusted: ['a.com'], followsOnly: false } };
+  const out = mk(S)(list());
+  assert.deepEqual(out.map((c) => c.domain), ['a.com', 'b.com']); assert.equal(out[0].f.t, 1); assert.equal(out[1].f.t, 0);
+  S.news.followsOnly = true;
+  assert.deepEqual(mk(S)(list()).map((c) => c.domain), ['a.com']);
+  const news = read('web/sec-news.js'), today = read('web/sec-today.js');
+  for (const x of ["'Top'", "'Latest'", "'Most discussed'", "'Follows only'", "' new since your last visit'"]) assert.ok(news.includes(x), `News has ${x}`);
+  assert.match(news, /by: 'domain'/, 'News caps each domain, not each display name');
+  assert.match(today, /storyPrefs\(/, 'Today honours the same preferences');
+  assert.match(core, /' more'/, 'a story card offers the other comments');
+  assert.match(core, /Also covered by/, 'the panel lists the other outlets');
 });
 
 console.log(`\n${passed} passed`);

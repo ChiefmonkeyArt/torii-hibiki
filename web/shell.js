@@ -149,7 +149,15 @@
   }
   var INVOICE = /^lnbc[0-9a-z]{20,2000}$/;
 
-  function init() { send('feed.init', { me: me, theme: theme(), tune: store.get('tune', null), onboarded: store.get('onboarded', false), askLikes: !store.get('skip7', false), split: store.get('split', 0), wallet: wallet && wallet.state(), version: me && me.version }); }
+  function init() { send('feed.init', { me: me, theme: theme(), tune: store.get('tune', null), news: store.get('news', null), onboarded: store.get('onboarded', false), askLikes: !store.get('skip7', false), split: store.get('split', 0), wallet: wallet && wallet.state(), version: me && me.version }); }
+  // News preferences from the napplet: only known fields, bounded lists, plain values.
+  function newsPrefs(d) {
+    var list = function (a, re, n) { return Array.isArray(a) ? a.filter(function (x) { return typeof x === 'string' && re.test(x); }).slice(-n) : []; };
+    var site = /^[a-z0-9.-]{1,80}$/;
+    return { followsOnly: d.followsOnly === true, sort: ['top', 'latest', 'discussed'].indexOf(d.sort) >= 0 ? d.sort : 'top',
+      hidden: list(d.hidden, site, 100), trusted: list(d.trusted, site, 100), read: list(d.read, /^[\w-]{8,64}$/, 300),
+      seen: typeof d.seen === 'number' && d.seen > 0 && d.seen < 4e9 ? Math.floor(d.seen) : 0 };
+  }
   var KINDS = { 1: 1, 6: 1, 7: 1, 10000: 1, 30004: 1, 30078: 1 };
   function onMessage(e) {
     if (e.source !== frame.contentWindow || !e.data || typeof e.data.type !== 'string') return;
@@ -174,6 +182,7 @@
       case 'feed.status': reply(m.id, call('health')); break;
       case 'feed.sync': reply(m.id, call('sync', { method: 'POST' })); break;
       case 'feed.tune': store.set('tune', d.weights || null); break;
+      case 'feed.news': store.set('news', newsPrefs(d)); break;
       case 'feed.pref':
         if (typeof d.askLikes === 'boolean') store.set('skip7', !d.askLikes);
         if (d.split === 0 || (d.split >= 280 && d.split <= 1600)) store.set('split', Math.round(d.split));

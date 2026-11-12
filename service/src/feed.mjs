@@ -52,6 +52,25 @@ export function slugTitle(u) {
   } catch { return ''; }
 }
 
+// Words that say nothing about which event a headline is about (en, de, fr, es).
+const STOP = new Set(('the and for with from that this what when where which into over after about than more says said will can have has not but you your our are was were its how why who new news live update '
+  + 'der die das und den dem des ein eine einer mit von fur ist im auf nicht sich als auch nach bei aus zum zur wie '
+  + 'les des une pour dans sur par pas est qui que avec '
+  + 'los las del una por para con que est').split(' '));
+/** The distinctive words of a headline, for telling when two outlets cover one event. */
+const NO_TOPIC = new Set(['uncategorized', 'uncategorised', 'news', 'nostr', 'general', 'misc', 'other']);
+
+export function headWords(t) {
+  return new Set(String(t || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 3 && !STOP.has(w)));
+}
+/** Same event: at least 3 distinctive words shared, covering half of the shorter headline. */
+export function sameEvent(a, b) {
+  let n = 0;
+  for (const w of a) if (b.has(w)) n++;
+  return n >= 3 && n / Math.min(a.size, b.size) >= 0.5;
+}
+
 export function makeFeed({ cfg, store, ingest, signer, links = null }) {
   const g = ingest.graph;
   const now = () => Math.floor(Date.now() / 1000);
@@ -262,7 +281,7 @@ export function makeFeed({ cfg, store, ingest, signer, links = null }) {
         const ok = want === 'article' ? kind === 'article' || kind === 'pending' || kind === 'unknown' : kind === want;
         if (!ok) continue;
         const key = rec?.key || storyKey(l.url);
-        if (!groups.has(key)) groups.set(key, { url: l.url, sig: l.sig, kind, rec, sharers: new Map(), notes: [], f: { c: 0, h: 0, ce: 0, ge: 0, z: 0, a: Infinity, s: 0, d: 0, m: 0 } });
+        if (!groups.has(key)) groups.set(key, { key, url: l.url, sig: l.sig, kind, rec, sharers: new Map(), notes: [], topics: new Set(), f: { c: 0, h: 0, ce: 0, ge: 0, z: 0, a: Infinity, s: 0, d: 0, m: 0 } });
         const c = groups.get(key);
         // Several addresses for one story: keep the copy the node read best.
         if (richness(rec) > richness(c.rec)) { c.rec = rec; c.url = l.url; c.sig = l.sig; c.kind = kind; }
@@ -272,10 +291,30 @@ export function makeFeed({ cfg, store, ingest, signer, links = null }) {
         };
         share(it.pubkey, said ? 1 : 0.35);
         for (const pk of it.repostedBy || []) share(pk, 0.35);
-        if (said && c.notes.length < 4) c.notes.push({ id: it.id, pubkey: it.pubkey, content: it.content.slice(0, 280), created_at: it.created_at });
-        else if (c.notes.length < 4 && !c.notes.some((n) => n.pubkey === it.pubkey)) c.notes.push({ id: it.id, pubkey: it.pubkey, content: it.content.slice(0, 280), created_at: it.created_at, bare: 1 });
+        for (const t of it.t || []) { const v = String(t).toLowerCase().slice(0, 40); if (c.topics.size < 12 && !NO_TOPIC.has(v)) c.topics.add(v); }
+        if (said && c.notes.length < 8) c.notes.push({ id: it.id, pubkey: it.pubkey, content: it.content.slice(0, 280), created_at: it.created_at });
+        else if (c.notes.length < 8 && !c.notes.some((n) => n.pubkey === it.pubkey)) c.notes.push({ id: it.id, pubkey: it.pubkey, content: it.content.slice(0, 280), created_at: it.created_at, bare: 1 });
         const f = c.f;
         f.c = f.c || it.f.c; f.h = Math.max(f.h, it.f.h); f.ce += it.f.ce; f.ge += it.f.ge; f.z += it.f.z; f.a = Math.min(f.a, it.f.a); f.s = Math.max(f.s, it.f.s);
+      }
+    }
+    // One event, several outlets: fold the smaller stories into the most shared one.
+    const titled = [...groups.values()].filter((c) => c.rec?.title && c.kind === 'article').map((c) => ({ c, w: headWords(c.rec.title), d: siteOf(c.url) }));
+    titled.sort((a, b) => b.c.sharers.size - a.c.sharers.size);
+    for (let i = 0; i < titled.length; i++) {
+      const A = titled[i];
+      if (A.gone || A.w.size < 3) continue;
+      for (let j = i + 1; j < titled.length; j++) {
+        const B = titled[j];
+        if (B.gone || B.d === A.d || B.w.size < 3 || !sameEvent(A.w, B.w)) continue;
+        B.gone = true;
+        const a = A.c, b = B.c;
+        (a.outlets ||= []).push({ site: b.rec.site || B.d, domain: B.d, url: b.url, sig: b.sig, title: b.rec.title });
+        for (const [pk, w] of b.sharers) a.sharers.set(pk, Math.max(a.sharers.get(pk) || 0, w));
+        for (const n of b.notes) if (!a.notes.some((x) => x.id === n.id)) a.notes.push(n);
+        for (const t of b.topics) a.topics.add(t);
+        a.f.ce += b.f.ce; a.f.ge += b.f.ge; a.f.z += b.f.z; a.f.a = Math.min(a.f.a, b.f.a); a.f.h = Math.max(a.f.h, b.f.h);
+        groups.delete(b.key);
       }
     }
     const stories = [];
@@ -289,9 +328,10 @@ export function makeFeed({ cfg, store, ingest, signer, links = null }) {
       c.f.d = [...c.sharers.values()].reduce((a, b) => a + b, 0);
       c.f.m = r.image ? 1 : 0;
       // Best note first: comments before bare shares, circle before others.
-      const notes = c.notes.sort((a, b) => (a.bare || 0) - (b.bare || 0) || (c.sharers.get(b.pubkey) || 0) - (c.sharers.get(a.pubkey) || 0)).slice(0, 4);
+      const notes = c.notes.sort((a, b) => (a.bare || 0) - (b.bare || 0) || (c.sharers.get(b.pubkey) || 0) - (c.sharers.get(a.pubkey) || 0)).slice(0, 8);
       stories.push({
-        id: c.sig, url: c.url, sig: c.sig, pubkey: pks[0], site: r.site || siteOf(r.url || c.url),
+        id: c.sig, url: c.url, sig: c.sig, pubkey: pks[0], site: r.site || siteOf(r.url || c.url), domain: siteOf(c.url),
+        topics: [...c.topics].slice(0, 6), outlets: (c.outlets || []).slice(0, 5),
         created_at: Math.max(...c.notes.map((n) => n.created_at), 0) || now() - Math.round(c.f.a * H),
         sharers: pks.slice(0, 8), shared: pks.length, inCircle: pks.filter((pk) => g.follows.has(pk) || pk === cfg.owner).length, notes: notes.map(({ bare, ...n }) => n),
         meta: c.rec && !c.rec.failed ? { site: r.site, title: r.title, tldr: r.tldr?.[0] || r.description?.slice(0, 200) || '', readMinutes: r.readMinutes, image: r.image, icon: r.icon }
@@ -314,7 +354,7 @@ export function makeFeed({ cfg, store, ingest, signer, links = null }) {
     },
     news() {
       const { stories, dev } = linkStories(72);
-      const sorted = Rank.rerank(stories, Rank.DEFAULTS, { perAuthor: 2, by: 'site' }).slice(0, 60);
+      const sorted = Rank.rerank(stories, Rank.DEFAULTS, { perAuthor: 2, by: 'domain' }).slice(0, 60);
       const curators = store.getByFilters({ kinds: [30004], authors: [...g.follows], limit: 40 })
         .map((e) => ({ id: e.id, pubkey: e.pubkey, title: (tag(e, 'title') || tag(e, 'd') || '').slice(0, 80), size: e.tags.filter((t) => t[0] === 'a' || t[0] === 'e').length }))
         .filter((c) => c.size > 0).slice(0, 12);
@@ -327,7 +367,7 @@ export function makeFeed({ cfg, store, ingest, signer, links = null }) {
       const live = store.getByFilters({ kinds: [30311], authors: [...g.follows], since: now() - 12 * H, limit: 50 })
         .filter((e) => tag(e, 'status') === 'live')
         .map((e) => ({ id: e.id, pubkey: e.pubkey, created_at: e.created_at, title: (tag(e, 'title') || 'Live').slice(0, 120), image: tag(e, 'image')?.startsWith('https://') ? signer.img(tag(e, 'image'), 640) : null, viewers: Number(tag(e, 'current_participants')) || null, f: { c: 1, a: 0, ce: 0, ge: 0, z: 0 } }));
-      const shared = Rank.rerank(linkStories(72, 'video').stories, Rank.DEFAULTS, { perAuthor: 2, by: 'site' }).slice(0, 8);
+      const shared = Rank.rerank(linkStories(72, 'video').stories, Rank.DEFAULTS, { perAuthor: 2, by: 'domain' }).slice(0, 8);
       return { items: top(vids.map((e) => item(e, eng, new Map())), 60), live, shared };
     },
     listen() {

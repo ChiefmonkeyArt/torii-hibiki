@@ -5,7 +5,7 @@ import { EventStore } from 'applesauce-core';
 import { generateSecretKey, getPublicKey, finalizeEvent } from 'nostr-tools/pure';
 import { HibikiEventDatabase } from '../src/eventdb.mjs';
 import { hostKind, storyKey, sameSite, siteOf, classify, canonicalOf, makeLinks } from '../src/links.mjs';
-import { makeFeed, commentLen, slugTitle, Rank } from '../src/feed.mjs';
+import { makeFeed, commentLen, slugTitle, Rank, headWords, sameEvent } from '../src/feed.mjs';
 import { makeSigner } from '../src/signer.mjs';
 import { parseOg, ytId, makeProxies } from '../src/proxy.mjs';
 
@@ -115,6 +115,17 @@ test('rerank can cap on a field other than the author', () => {
   assert.ok(Rank.score({ c: 1, d: 1 }) > Rank.score({ c: 1, d: 0.35 }), 'a comment beats a bare share');
 });
 
+test('a site you trust ranks higher and says why; stories cap by domain (v0.2.13)', () => {
+  const f = { c: 1, d: 1, a: 0 };
+  assert.ok(Rank.score({ ...f, t: 1 }) > Rank.score(f), 'trusted outranks the same story untrusted');
+  assert.ok(Rank.explain({ ...f, t: 1 }).reasons.some((r) => r.key === 'trusted' && r.label === 'A site you trust'));
+  assert.ok(!Rank.explain(f).reasons.some((r) => r.key === 'trusted'), 'no reason shown when not trusted');
+  const mk = (id, domain) => ({ id, pubkey: 'p' + id, domain, site: 'Same name', created_at: 0, f: { c: 1, d: 5 - id, a: 0 } });
+  const out = Rank.rerank([mk(1, 'a.com'), mk(2, 'a.com'), mk(3, 'a.com'), mk(4, 'b.com')], Rank.DEFAULTS, { perAuthor: 2, by: 'domain' });
+  assert.ok(out.slice(0, 3).some((x) => x.id === 4), 'two sites that share a display name are still capped apart');
+  assert.equal(out.at(-1).domain, 'a.com', 'the third story from one domain goes last');
+});
+
 test('News: only articles, grouped by official address, best comment first, one site capped, code and videos moved', async () => {
   const ownerSk = generateSecretKey(), owner = getPublicKey(ownerSk);
   const keys = Array.from({ length: 4 }, () => generateSecretKey()), pks = keys.map(getPublicKey);
@@ -192,4 +203,34 @@ test('YouTube addresses map to a video id; cached previews are signed when read'
   const out = await makeProxies({ signer, cache, imager: null }).link(raw.url);
   assert.equal(out.image, signer.img(raw.image, 640), 'signed with the current secret');
   assert.equal(raw.image, 'https://a.example/i.jpg', 'the cached copy stays raw');
+});
+
+test('one event across outlets folds into one story; topics come from the notes', async () => {
+  const w = (t) => headWords(t);
+  assert.ok(sameEvent(w('LNbits urges all operators to shut down after attack'), w('LNbits orders emergency shutdown of operators after attack')));
+  assert.ok(!sameEvent(w('Bitcoin price falls after US inflation data'), w('Bitcoin Core publishes three security fixes')), 'one shared word is not one event');
+  assert.ok(!sameEvent(w('The news of the day'), w('The news of the week')), 'stop words do not count');
+  const owner = getPublicKey(generateSecretKey()), keys = Array.from({ length: 3 }, () => generateSecretKey()), pks = keys.map(getPublicKey);
+  const db = new HibikiEventDatabase(':memory:'), store = new EventStore({ database: db });
+  const t = Math.floor(Date.now() / 1000) - 300;
+  const post = (k, content, tags = []) => store.add(finalizeEvent({ kind: 1, created_at: t, tags, content }, k));
+  const A = 'https://one.example/2026/lnbits-urges-operators-shut-down', B = 'https://two.example/news/lnbits-emergency-shutdown', C = 'https://three.example/p/unrelated-story-about-gardens';
+  post(keys[0], `LNbits users, read this now ${A}`, [['t', 'Lightning']]);
+  post(keys[1], `Shut it down until patched ${B}`, [['t', 'security']]);
+  post(keys[2], `Something else entirely, lovely read ${C}`);
+  const meta = {
+    [A]: { ogType: 'article', title: 'LNbits urges all operators to shut down after attack', site: 'One' },
+    [B]: { ogType: 'article', title: 'LNbits orders emergency shutdown of operators after attack', site: 'Two' },
+    [C]: { ogType: 'article', title: 'A quiet story about community gardens', site: 'Three' },
+  };
+  const links = makeLinks({ fetchMeta: async (u) => ({ url: u, ...meta[u] }) });
+  const ingest = { graph: { follows: new Set(pks), hop2: new Map(), mutes: new Set(), updated: Date.now() } };
+  const feed = makeFeed({ cfg: { owner }, store, ingest, signer: makeSigner('ab'.repeat(32)), links });
+  feed.warmLinks(); await links.idle();
+  const d = feed.section('news');
+  assert.equal(d.clusters.length, 2, 'two outlets, one story; the unrelated one stays');
+  const s = d.clusters.find((c) => /LNbits/.test(c.meta.title));
+  assert.equal(s.outlets.length, 1); assert.equal(s.shared, 2, 'sharers of both outlets count');
+  assert.deepEqual([...s.topics].sort(), ['lightning', 'security']);
+  assert.equal(s.notes.length, 2); assert.ok(s.domain.endsWith('.example'));
 });

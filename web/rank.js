@@ -4,7 +4,7 @@
 (function (g) {
   'use strict';
   var DEFAULTS = { circle: 1, explore: 0.35, social: 0.6, popular: 0.2, zaps: 0.15, fresh: 0.5, media: 0 };
-  var LABELS = { discuss: 'Shared in your circle', circle: 'From your circle', explore: 'Friends of friends', social: 'Circle reactions', popular: 'Wider reactions', zaps: 'Zaps', fresh: 'Freshness', media: 'Media' };
+  var LABELS = { discuss: 'Shared in your circle', trusted: 'A site you trust', circle: 'From your circle', explore: 'Friends of friends', social: 'Circle reactions', popular: 'Wider reactions', zaps: 'Zaps', fresh: 'Freshness', media: 'Media' };
   function clamp(x, a, b) { return x < a ? a : x > b ? b : x; }
   function weights(w) {
     var o = {}, k;
@@ -24,6 +24,7 @@
       media: w.media * 0.3 * (f.m ? 1 : 0),
       // Stories only: distinct sharers, a comment worth more than a bare share (ADR-0005).
       discuss: w.social * 0.8 * Math.log1p(f.d || 0),
+      trusted: f.t ? 0.5 : 0,
     };
     var base = 0, k;
     for (k in p) base += p[k];
