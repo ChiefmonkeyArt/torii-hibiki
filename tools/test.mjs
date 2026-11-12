@@ -245,7 +245,7 @@ t('installer: compacts the event store with the service stopped, before the flip
   assert.match(sh, /runuser -u "\$SVC_USER" -- env SQLITE_TMPDIR="\$DATA_DIR"/, 'runs as the service user, temp files on the data disk');
   assert.match(sh, /warning: event store compaction failed; continuing/, 'a failed compaction does not break the deploy');
   for (const f of ['service/src/eventdb.mjs', 'service/src/compact.mjs']) assert.ok(sh.includes(f), `preflight lists ${f}`);
-  assert.ok(!/VACUUM INTO/.test(read('service/src/compact.mjs')), 'no backup copy: the store is a relay cache (ADR-0003, v0.2.9)');
+  assert.ok(!/VACUUM INTO|backups/.test(read('service/src/compact.mjs')), 'no backup code: the store is a relay cache (ADR-0003)');
 });
 t('feed service keeps one version per replaceable slot (ADR-0003)', () => {
   const srv = read('service/src/server.mjs');

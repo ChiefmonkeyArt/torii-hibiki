@@ -119,7 +119,7 @@ test('compaction removes only replaced versions and orphan tags, takes no backup
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('compaction refuses to start without enough free disk, and drops v0.2.8 backups', () => {
+test('compaction refuses to start without enough free disk, and never writes a backup', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hcompact-')), file = path.join(dir, 'events.db');
   try {
     legacyStore(file);
@@ -128,19 +128,8 @@ test('compaction refuses to start without enough free disk, and drops v0.2.8 bac
     assert.equal(low.reason, 'disk');
     assert.ok(low.need >= low.before.bytes * 2, 'needs room for VACUUM and the journal');
     assert.ok(before.equals(fs.readFileSync(file)), 'nothing changed');
-    const b = path.join(dir, 'backups');
-    fs.mkdirSync(b);
-    fs.writeFileSync(path.join(b, 'events-20261111T154634Z.db'), 'x'.repeat(1000));
-    fs.writeFileSync(path.join(b, 'events-20261111T154634Z.db-journal'), 'y');
-    const lines = [];
-    assert.equal(compact(file, { log: (l) => lines.push(l) }).dropped, 1001);
-    assert.ok(!fs.existsSync(b), 'empty backups folder removed');
-    assert.ok(lines.some((l) => /removed old backups/.test(l)));
-    fs.mkdirSync(b);
-    fs.writeFileSync(path.join(b, 'events-20200101T000000Z.db'), 'old');
-    fs.writeFileSync(path.join(b, 'keep-me.txt'), 'not ours');
-    assert.equal(compact(file, { log: () => {} }).reason, 'clean', 'backups go even when the store is already clean');
-    assert.deepEqual(fs.readdirSync(b), ['keep-me.txt'], 'other files are left alone');
+    compact(file, { log: () => {} });
+    assert.deepEqual(fs.readdirSync(dir).sort(), ['events.db'], 'no backup or temp files');
     const db = new DatabaseSync(file); const m = measure(db); db.close();
     assert.equal(m.stale + m.orphanTags, 0);
     assert.equal(compact(path.join(dir, 'missing.db'), { log: () => {} }).reason, 'missing');
