@@ -4,7 +4,7 @@
 (function (g) {
   'use strict';
   var DEFAULTS = { circle: 1, explore: 0.35, social: 0.6, popular: 0.2, zaps: 0.15, fresh: 0.5, media: 0 };
-  var LABELS = { circle: 'From your circle', explore: 'Friends of friends', social: 'Circle reactions', popular: 'Wider reactions', zaps: 'Zaps', fresh: 'Freshness', media: 'Media' };
+  var LABELS = { discuss: 'Shared in your circle', circle: 'From your circle', explore: 'Friends of friends', social: 'Circle reactions', popular: 'Wider reactions', zaps: 'Zaps', fresh: 'Freshness', media: 'Media' };
   function clamp(x, a, b) { return x < a ? a : x > b ? b : x; }
   function weights(w) {
     var o = {}, k;
@@ -22,6 +22,8 @@
       popular: w.popular * Math.log1p(f.ge || 0) / 3,
       zaps: w.zaps * Math.log1p((f.z || 0) / 21) / 5,
       media: w.media * 0.3 * (f.m ? 1 : 0),
+      // Stories only: distinct sharers, a comment worth more than a bare share (ADR-0005).
+      discuss: w.social * 0.8 * Math.log1p(f.d || 0),
     };
     var base = 0, k;
     for (k in p) base += p[k];
@@ -40,24 +42,25 @@
     return { score: Math.round(r[0] * 1000) / 1000, reasons: out };
   }
   /** Sorts items by score, keeps any one author from dominating, and leaves
-   *  every fifth slot for a friend-of-friend post so the feed can surprise. */
+   *  every fifth slot for a friend-of-friend post so the feed can surprise.
+   *  opts.by caps on another field instead of the author (News caps each site). */
   function rerank(items, w, opts) {
     opts = opts || {};
-    var perAuthor = opts.perAuthor || 3, slot = opts.exploreEvery || 5;
+    var perAuthor = opts.perAuthor || 3, slot = opts.exploreEvery || 5, by = opts.by || 'pubkey';
     var scored = items.map(function (it) { return { it: it, s: score(it.f || {}, w) }; });
     scored.sort(function (a, b) { return b.s - a.s || (b.it.created_at - a.it.created_at); });
     var circle = [], explore = [];
     scored.forEach(function (x) { (x.it.f && !x.it.f.c && x.it.f.h ? explore : circle).push(x); });
     var out = [], count = {}, held = [];
     function take(x) {
-      var a = x.it.pubkey;
+      var a = x.it[by];
       if ((count[a] || 0) >= perAuthor) { held.push(x); return false; }
       count[a] = (count[a] || 0) + 1; out.push(x.it); return true;
     }
     while (circle.length || explore.length) {
       if (explore.length && (out.length + 1) % slot === 0) { take(explore.shift()); continue; }
       var next = circle.length ? circle.shift() : explore.shift();
-      if (out.length && out[out.length - 1].pubkey === next.it.pubkey && circle.length) { circle.splice(1, 0, next); next = circle.shift(); }
+      if (out.length && out[out.length - 1][by] === next.it[by] && circle.length) { circle.splice(1, 0, next); next = circle.shift(); }
       take(next);
     }
     held.forEach(function (x) { out.push(x.it); });

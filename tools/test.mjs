@@ -244,7 +244,7 @@ t('installer: compacts the event store with the service stopped, before the flip
   assert.ok(test > 0 && stop > test && run > stop && flip > run, 'nginx -t, stop, compact, then flip');
   assert.match(sh, /runuser -u "\$SVC_USER" -- env SQLITE_TMPDIR="\$DATA_DIR"/, 'runs as the service user, temp files on the data disk');
   assert.match(sh, /warning: event store compaction failed; continuing/, 'a failed compaction does not break the deploy');
-  for (const f of ['service/src/eventdb.mjs', 'service/src/schema.mjs', 'service/src/compact.mjs']) assert.ok(sh.includes(f), `preflight lists ${f}`);
+  for (const f of ['service/src/eventdb.mjs', 'service/src/schema.mjs', 'service/src/compact.mjs', 'service/src/links.mjs']) assert.ok(sh.includes(f), `preflight lists ${f}`);
   assert.ok(!/VACUUM INTO|backups/.test(read('service/src/compact.mjs')), 'no backup code: the store is a relay cache (ADR-0003)');
 });
 t('feed service keeps one version per replaceable slot (ADR-0003)', () => {
@@ -293,6 +293,16 @@ t('lean event store: one tag copy, deletions honoured, engagement window (ADR-00
   // Follow lists have no tag rows, so nothing may query them by tag.
   for (const f of fs.readdirSync(path.join(ROOT, 'service/src')))
     assert.ok(!/kinds:\s*\[[^\]]*\b3\b[^\]]*\][^}]*'#/.test(read('service/src/' + f)), `${f} queries kind 3 by tag`);
+});
+t('news link quality: links read in the background, articles only, lead card (ADR-0005)', () => {
+  assert.ok(fs.existsSync(path.join(ROOT, 'docs/adr/0005-news-link-quality.md')), 'ADR-0005');
+  const server = read('service/src/server.mjs'), links = read('service/src/links.mjs'), proxy = read('service/src/proxy.mjs');
+  assert.match(server, /makeLinks\(/, 'the server reads shared links'); assert.match(server, /warmLinks\(\)/);
+  assert.match(server, /\.unref\(\)/, 'background timers do not hold the process');
+  assert.match(links, /fetchMeta/, 'links go through the link proxy (safefetch), never a new fetch path');
+  assert.ok(!/\bfetch\(/.test(links), 'links.mjs makes no direct requests');
+  assert.match(proxy, /function signed\(/, 'previews are cached raw and signed when read');
+  assert.match(read('web/napplet.js'), /storyCard\(list\[0\], true\)/, 'News opens with a lead card');
 });
 
 console.log(`\n${passed} passed`);

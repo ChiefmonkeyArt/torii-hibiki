@@ -79,6 +79,7 @@
   var NS = 'http://www.w3.org/2000/svg';
   var ICONS = { reply: 'M4 5h16v11H9l-5 4z', heart: 'M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7a4.3 4.3 0 0 1 7.5 2.8C19.5 15.4 12 20 12 20z', bolt: 'M13.5 2 4.5 13.5H11L10 22l9.5-12H13z' };
   function icon(n) { var v = document.createElementNS(NS, 'svg'), pa = document.createElementNS(NS, 'path'); v.setAttribute('viewBox', '0 0 24 24'); v.setAttribute('class', 'ic ic-' + n); v.setAttribute('aria-hidden', 'true'); pa.setAttribute('d', ICONS[n]); v.appendChild(pa); return v; }
+  function siteHue(s) { var n = 0; for (var i = 0; i < s.length; i++) n = (n * 31 + s.charCodeAt(i)) >>> 0; return hue(('000000' + (n % 16777216).toString(16)).slice(-6)); }
   function hue(pk) { var n = parseInt((pk || '0').slice(0, 6), 16) || 0; return 'linear-gradient(135deg,hsl(' + (n % 360) + ' 70% 55%),hsl(' + ((n >> 8) % 360) + ' 70% 45%))'; }
   function stack(pks) { return h('span', { class: 'stk' }, pks.slice(0, 3).map(function (p) { var x = prof(p); return x.pic ? h('img', { src: x.pic, alt: '' }) : h('img', { alt: '', style: 'background:' + hue(p) }); })); }
   function toast(t) { var el = h('div', { class: 'glass toast', role: 'status' }, t); document.body.appendChild(el); setTimeout(function () { el.remove(); }, 2600); }
@@ -749,7 +750,7 @@
     if (items.length) { pg.appendChild(sec('From your circle', 'Original posts')); pg.appendChild(h('div', { class: 'grid' }, items.map(function (it) { return noteCard(it, { peek: false }); }))); }
     if ((d.live || []).length || (d.watch || []).length) { pg.appendChild(sec('Watch', d.live.length ? d.live.length + ' live now' : null)); pg.appendChild(h('div', { class: 'grid sm' }, d.live.map(liveCard).concat(d.watch.map(videoCard)))); }
     if ((d.read || []).length) { pg.appendChild(sec('Worth reading')); pg.appendChild(h('div', { class: 'grid' }, d.read.map(articleCard))); }
-    if ((d.news || []).length) { pg.appendChild(sec('In the news', 'What your circle is sharing')); pg.appendChild(h('div', { class: 'grid' }, d.news.map(clusterCard))); }
+    if ((d.news || []).length) { pg.appendChild(sec('In the news', 'What your circle is sharing')); pg.appendChild(h('div', { class: 'slist' }, d.news.map(function (c) { return storyCard(c); }))); }
     if (!hero && !items.length) pg.appendChild(h('div', { class: 'empty' }, 'Your node is still gathering your circle. This fills up within a few minutes.'));
   }
 
@@ -773,18 +774,63 @@
   function story(c) {
     return c._s || (c._s = { story: 1, id: 's' + c.url, url: c.url, sig: c.sig, pubkey: c.sharers[0], sharers: c.sharers, created_at: c.created_at, notes: c.notes, media: [], links: [] });
   }
-  function clusterCard(c) {
+  // News (ADR-0005): one lead story, then a tight list. Headline, site, read
+  // time and a one-line TL;DR come with the feed; links the node has not read
+  // yet fill in from the link preview.
+  function storyMeta(c, cb) {
+    var m = c.meta || {};
+    if (!m.pending) { cb(m); return; }
+    cb(m);
+    (previews[c.url] || (previews[c.url] = rpc('feed.link', { url: c.url, sig: c.sig }))).then(function (x) {
+      cb({ site: x.site, title: x.title, tldr: (x.tldr && x.tldr[0]) || (x.description || '').slice(0, 200), readMinutes: x.readMinutes, image: x.image, icon: x.icon });
+    }, function () {});
+  }
+  function siteBadge(m, c) {
+    var name = m.site || host(c.url);
+    return m.icon ? h('img', { class: 'sico', src: m.icon, alt: '', loading: 'lazy' }) : h('span', { class: 'sico', style: 'background:' + siteHue(name), 'aria-hidden': 'true' }, (name[0] || '?').toUpperCase());
+  }
+  function sharedLine(c) {
+    var n = c.inCircle || 0, all = c.shared || c.sharers.length;
+    var t = n ? n + ' in your circle' + (all > n ? ' \u00B7 ' + (all - n) + ' more' : '') : 'Shared by ' + (all === 1 ? prof(c.sharers[0]).name : all + ' people');
+    return h('span', { class: 'via', style: 'margin-left:0' }, stack(c.sharers), t);
+  }
+  function bestNote(c) {
+    var n = (c.notes || [])[0], t = n ? plain(n.content) : '';
+    return t ? h('div', { class: 'rp sq' }, avatar(n.pubkey, 'xs'), h('div', { class: 'txt' }, h('b', {}, prof(n.pubkey).name + ' '), t)) : null;
+  }
+  function storyCard(c, lead) {
     var st = story(c), pick = function () { select(st); };
-    var card = h('div', { class: 'glass card pick' + (S.sel && S.sel.id === st.id ? ' sel' : ''), 'data-id': st.id }, linkCard({ url: c.url, sig: c.sig }, false, pick),
-      h('div', { class: 'row' }, h('span', { class: 'via', style: 'margin-left:0' }, stack(c.sharers), 'Shared by ' + (c.sharers.length === 1 ? prof(c.sharers[0]).name : c.sharers.length + ' people')), h('span', { class: 'm' }, ago(c.created_at))),
-      c.notes.slice(0, 2).map(function (n) { return h('div', { class: 'rp' }, avatar(n.pubkey, 'xs'), h('div', { class: 'txt', style: 'margin:0;font-size:13px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden' }, richText(n.content.replace(c.url, '').trim(), true))); }));
+    var card = h('div', { class: 'glass card pick story' + (lead ? ' lead' : '') + (S.sel && S.sel.id === st.id ? ' sel' : ''), 'data-id': st.id, tabindex: '0', role: 'button' });
+    storyMeta(c, function (m) {
+      clear(card);
+      add(card, [lead && m.image ? h('div', { class: 'tsimg' }, h('img', { src: m.image, alt: '', loading: 'lazy' })) : null,
+        h('div', { class: 'srow' }, siteBadge(m, c), h('span', { class: 'm' }, (m.site || host(c.url)) + (m.readMinutes ? ' \u00B7 ' + m.readMinutes + ' min read' : '')), h('span', { class: 'm', style: 'margin-left:auto' }, ago(c.created_at))),
+        h(lead ? 'h3' : 'b', { class: 'shl' }, m.title || c.url.replace(/^https:\/\//, '').slice(0, 90)),
+        m.tldr ? h('p', { class: 'stl' + (lead ? ' l2' : '') }, m.tldr) : null,
+        h('div', { class: 'row' }, sharedLine(c), !lead && m.image ? h('img', { class: 'sthumb', src: m.image, alt: '', loading: 'lazy' }) : null),
+        bestNote(c)]);
+    });
     card.addEventListener('click', function (e) { if (!e.target.closest('a,button')) pick(); });
+    card.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
     return card;
   }
+  function storyList(list) {
+    if (!list.length) return h('div', { class: 'glass empty' }, 'No articles shared in your circle in the last three days.');
+    // Lead with the first of the top three that has a picture.
+    var li = list.slice(0, 3).findIndex(function (c) { return c.meta && c.meta.image; });
+    if (li > 0) list = [list[li]].concat(list.slice(0, li), list.slice(li + 1));
+    return h('div', { class: 'stories' }, storyCard(list[0], true), h('div', { class: 'slist' }, list.slice(1).map(function (c) { return storyCard(c); })));
+  }
+  function devCard(c) {
+    return btn([h('span', { class: 'sico', style: 'background:' + siteHue(c.site) }, (c.site[0] || '?').toUpperCase()), h('span', { style: 'min-width:0' }, h('b', { style: 'display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, c.title), h('span', { class: 'm' }, c.site + ' \u00B7 ' + (c.sharers.length === 1 ? prof(c.sharers[0]).name : c.sharers.length + ' people')))],
+      { class: 'glass card dev' }, function () { tell('feed.open', { url: c.url }); });
+  }
   function news(d) {
-    var list = ranked(d.clusters);
-    var main = h('div', {}, sec('In the news', 'Links your circle is sharing, grouped by story'), list.length ? h('div', { class: 'grid' }, list.map(clusterCard)) : h('div', { class: 'glass empty' }, 'No shared links yet.'));
-    function side() { return h('div', { class: 'side' }, h('p', { class: 'm', style: 'margin:0 0 6px' }, 'Tap a story for a quick summary.'), sec('Mekiki', 'Curators in your circle'),
+    var list = R.rerank(d.clusters || [], S.weights, { perAuthor: 2, by: 'site' });
+    var main = h('div', {}, sec('In the news', 'Articles your circle is sharing, grouped by story'), storyList(list));
+    function side() { return h('div', { class: 'side' }, h('p', { class: 'm', style: 'margin:0 0 6px' }, 'Tap a story for a quick summary.'),
+      (d.dev || []).length ? [sec('Dev', 'Code your circle is sharing'), d.dev.map(devCard)] : null,
+      sec('Mekiki', 'Curators in your circle'),
       d.curators.length ? d.curators.map(function (c) { return h('div', { class: 'glass card', style: 'flex-direction:row;align-items:center' }, avatar(c.pubkey, 'sm'), h('div', { style: 'min-width:0' }, h('b', {}, c.title || 'Collection'), h('div', { class: 'm' }, prof(c.pubkey).name + ' \u00B7 ' + c.size + ' items')), h('span', { class: 'tag f', style: 'margin-left:auto' }, '\u76EE\u5229\u304D')); }) : h('p', { class: 'm' }, 'When people you follow publish curated lists (NIP-51 sets), they appear here.')); }
     panelEl = h('aside', { class: 'glass panel', 'aria-label': 'Story' });
     panelEl._empty = side;
@@ -833,6 +879,8 @@
     pg.appendChild(sec('Watch', 'Videos from your circle this week \u00B7 tap to play through your node'));
     var items = ranked(d.items);
     pg.appendChild(items.length ? h('div', { class: 'grid sm' }, items.map(videoCard)) : h('div', { class: 'glass empty' }, 'No videos from your circle this week.'));
+    // Video links (YouTube and the like) shared in the circle; they open on the original site.
+    if ((d.shared || []).length) { pg.appendChild(sec('Shared videos', 'Links your circle is sharing \u00B7 open on the original site')); pg.appendChild(h('div', { class: 'grid sm' }, d.shared.map(function (c) { return h('div', { class: 'glass card' }, linkCard({ url: c.url, sig: c.sig }), sharedLine(c)); }))); }
   }
   function listen(d) {
     pg.appendChild(sec('Listen', 'Music, voice notes and podcasts from your circle'));

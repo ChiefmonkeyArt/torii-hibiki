@@ -106,7 +106,7 @@ Hibiki uses [Applesauce](https://github.com/hzrd149/applesauce) v7 (MIT, GPL-com
 **Product focus.** Hibiki is first a place to find interesting and entertaining things from your circle and its news: notes, pictures, video, audio, long reads and live streams. The algorithm is not the headline. Its controls stay subtle (a small "signal" pill, a glint on each card that explains why it is there, an orb for your settings) but are always one tap away and pleasant to use.
 
 - **Originals first.** Social sections show root posts only (NIP-10: no reply markers, positional e-tags count as replies, mentions and quotes do not). A card shows a peek of the two best direct replies (v0.2.2: from anyone, not only your circle).
-- **Sections:** Today (hero plus picks), Circle, News (link-led posts and curators, "Mekiki" 目利き), Watch, Listen, Read (kind 30023) and Your signal.
+- **Sections:** Today (hero plus picks), Circle, News (articles shared in the circle, one story per article, plus curators, "Mekiki" 目利き; since v0.2.12 see ADR-0005), Watch, Listen, Read (kind 30023) and Your signal.
 - **Right panel** on desktop, full-screen sheet on phones. v0.2.2: one scrolling column with no tabs: the post, its photos or a link summary, then every reply underneath, with a pinned composer. Nothing is hidden behind a "show" button except replies the spam score rejects (counted, not shown).
 - **Reply order** (v0.2.2, peek and panel alike): people you follow first, then popularity (likes + 2 x reposts + 2 x replies + log10(1 + zap sats)), then oldest first.
 - **The owner's own likes and reposts** (v0.2.2) are reported per post (`me`) so buttons show them, but they no longer count as circle engagement, so liking a post does not move it.

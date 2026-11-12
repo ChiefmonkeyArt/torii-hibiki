@@ -156,7 +156,7 @@ img.broken{opacity:0}
 .phead{padding:18px 20px;border-radius:18px;display:flex;flex-direction:column;gap:12px;align-items:flex-start}.ph{display:flex;gap:16px;align-items:center;min-width:0}
 .ph h2{margin:0 0 2px;font-size:22px;letter-spacing:-.01em;overflow-wrap:anywhere}.av.xl{width:84px;height:84px}.tags{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}.tag.warn{color:var(--warn)}
 .phead .txt{margin:0;font-size:14px;line-height:1.55;color:var(--tx2)}.phead .acts{margin:0}
-@media (max-width:860px){.split{display:none}.hero img.fg{display:none}.hero .ov{width:100%}.lay{grid-template-columns:1fr}.panel{display:none}.panel.open{display:flex;position:fixed;inset:0;top:0;height:100vh;z-index:40;border-radius:0}.srch{display:none}.top{gap:10px;margin:8px 8px 0;padding:8px 10px}.logo span:last-child{display:none}.pg{padding:14px 10px 50px}.stats{grid-template-columns:1fr 1fr}.sl{grid-template-columns:110px 1fr 36px}.hero{min-height:260px}.hero .ov p{font-size:16px}}
+@media (max-width:860px){.split{display:none}.hero img.fg{display:none}.hero .ov{width:100%}.lay{grid-template-columns:minmax(0,1fr)}.panel{display:none}.panel.open{display:flex;position:fixed;inset:0;top:0;height:100vh;z-index:40;border-radius:0}.srch{display:none}.top{gap:10px;margin:8px 8px 0;padding:8px 10px}.logo span:last-child{display:none}.pg{padding:14px 10px 50px}.stats{grid-template-columns:1fr 1fr}.sl{grid-template-columns:110px 1fr 36px}.hero{min-height:260px}.hero .ov p{font-size:16px}}
 .hero .kb{align-self:flex-start}
 .pill{white-space:nowrap;flex-shrink:0}
 .side .stats{grid-template-columns:1fr 1fr}
@@ -180,3 +180,15 @@ img.broken{opacity:0}
 @keyframes zing{0%{transform:scale(1)}35%{transform:scale(1.55) rotate(-12deg);filter:drop-shadow(0 0 6px #f7931a)}100%{transform:scale(1)}}
 @keyframes zplus{from{opacity:1;transform:translate(-50%,0)}to{opacity:0;transform:translate(-50%,-18px)}}
 @media(prefers-reduced-motion:reduce){.zb.zing .ic,.zb.zing::after{animation:none}}
+/* News stories (ADR-0005): a lead card, then a tight list */
+.stories{display:flex;flex-direction:column;gap:12px}.slist{display:flex;flex-direction:column;gap:8px}
+.story{gap:6px;padding:12px 14px}.story.lead{padding:14px;gap:8px}.story.lead h3{font-size:22px;-webkit-line-clamp:3}
+.story:focus-visible{outline:2px solid var(--a);outline-offset:2px}
+.srow{display:flex;align-items:center;gap:8px;font-size:12px;min-width:0}.srow .m{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sico{width:18px;height:18px;border-radius:5px;flex-shrink:0;object-fit:cover;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700}
+.shl{font-size:15px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin:0}
+.stl{margin:0;font-size:13px;color:var(--tx2);line-height:1.45;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}.stl.l2{-webkit-line-clamp:2;font-size:14px}
+.sthumb{width:64px;height:40px;border-radius:8px;object-fit:cover;margin-left:auto;flex-shrink:0}
+.rp.sq .txt{margin:0;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;color:var(--tx2)}.rp.sq b{color:var(--tx);font-weight:600}
+.card.dev{flex-direction:row;align-items:center;gap:10px;padding:10px 12px;margin-bottom:8px}
+.panel>.side{flex:1;min-height:0;overflow:auto;padding:14px}

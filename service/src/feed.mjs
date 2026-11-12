@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import crypto from 'node:crypto';
 import { nip19 } from 'nostr-tools';
 import { isRootNote, replyRefs, extract, hashtags, parseProfile, zapSats, tag } from './nostr.mjs';
+import { hostKind, storyKey, siteOf } from './links.mjs';
 
 const ctx = {};
 vm.runInNewContext(fs.readFileSync(new URL('../../web/rank.js', import.meta.url), 'utf8'), ctx);
@@ -39,7 +40,19 @@ export function spamScore(ev, dupes) {
   return s;
 }
 
-export function makeFeed({ cfg, store, ingest, signer }) {
+/** Words someone added beyond the links and mentions: a share with a comment counts more than a bare one. */
+export const commentLen = (content) => (content || '').replace(/https?:\/\/\S+|nostr:\S+/g, '').replace(/\s+/g, ' ').trim().length;
+/** A readable headline from the address when the page could not be read. */
+export function slugTitle(u) {
+  try {
+    const seg = new URL(u).pathname.split('/').filter(Boolean).pop() || '';
+    const t = decodeURIComponent(seg).replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[-_+]+/g, ' ').replace(/\b\d{5,}\b/g, '')
+      .split(' ').filter((w) => w && !(/\d/.test(w) && /^[0-9a-f]{4,}$/i.test(w))).join(' ');
+    return t.split(' ').filter((w) => /[a-z]{2}/i.test(w)).length >= 3 ? t[0].toUpperCase() + t.slice(1, 160) : '';
+  } catch { return ''; }
+}
+
+export function makeFeed({ cfg, store, ingest, signer, links = null }) {
   const g = ingest.graph;
   const now = () => Math.floor(Date.now() / 1000);
 
@@ -224,6 +237,75 @@ export function makeFeed({ cfg, store, ingest, signer }) {
     return Rank.rerank(items, Rank.DEFAULTS).slice(0, n);
   }
 
+  /**
+   * Shared links grouped into stories (ADR-0005). Only articles reach News;
+   * videos go to Watch and code to the Dev strip; shops, social posts and other
+   * pages are left out. Links not read yet count as articles until they are;
+   * a link nobody could read needs two sharers and a readable address.
+   */
+  const richness = (r) => (!r || r.failed ? 0 : 1 + (r.title ? 1 : 0) + (r.tldr ? 2 : 0) + (r.image ? 1 : 0));
+  function linkStories(sinceH, want = 'article') {
+    const items = circleItems(sinceH).filter((it) => it.links.length);
+    links?.want([...new Set(items.flatMap((it) => it.links.map((l) => l.url)))]);
+    const groups = new Map(), dev = new Map();
+    for (const it of items) {
+      const said = commentLen(it.content) >= 20;
+      for (const l of it.links) {
+        const rec = links?.get(l.url);
+        const kind = rec ? rec.kind : hostKind(l.url) || 'pending';
+        if (kind === 'code' && want === 'article') {
+          const k = storyKey(l.url);
+          if (!dev.has(k)) dev.set(k, { url: l.url, sig: l.sig, title: new URL(l.url).pathname.split('/').filter(Boolean).slice(0, 2).join('/') || siteOf(l.url), site: siteOf(l.url), sharers: [], created_at: 0 });
+          const d = dev.get(k); if (!d.sharers.includes(it.pubkey)) d.sharers.push(it.pubkey); d.created_at = Math.max(d.created_at, it.created_at);
+          continue;
+        }
+        const ok = want === 'article' ? kind === 'article' || kind === 'pending' || kind === 'unknown' : kind === want;
+        if (!ok) continue;
+        const key = rec?.key || storyKey(l.url);
+        if (!groups.has(key)) groups.set(key, { url: l.url, sig: l.sig, kind, rec, sharers: new Map(), notes: [], f: { c: 0, h: 0, ce: 0, ge: 0, z: 0, a: Infinity, s: 0, d: 0, m: 0 } });
+        const c = groups.get(key);
+        // Several addresses for one story: keep the copy the node read best.
+        if (richness(rec) > richness(c.rec)) { c.rec = rec; c.url = l.url; c.sig = l.sig; c.kind = kind; }
+        const share = (pk, worth) => {
+          const w = worth * (g.follows.has(pk) || pk === cfg.owner ? 1 : 0.5);
+          c.sharers.set(pk, Math.max(c.sharers.get(pk) || 0, w));
+        };
+        share(it.pubkey, said ? 1 : 0.35);
+        for (const pk of it.repostedBy || []) share(pk, 0.35);
+        if (said && c.notes.length < 4) c.notes.push({ id: it.id, pubkey: it.pubkey, content: it.content.slice(0, 280), created_at: it.created_at });
+        else if (c.notes.length < 4 && !c.notes.some((n) => n.pubkey === it.pubkey)) c.notes.push({ id: it.id, pubkey: it.pubkey, content: it.content.slice(0, 280), created_at: it.created_at, bare: 1 });
+        const f = c.f;
+        f.c = f.c || it.f.c; f.h = Math.max(f.h, it.f.h); f.ce += it.f.ce; f.ge += it.f.ge; f.z += it.f.z; f.a = Math.min(f.a, it.f.a); f.s = Math.max(f.s, it.f.s);
+      }
+    }
+    const stories = [];
+    for (const c of groups.values()) {
+      // A link nobody could read needs a second sharer before it is shown.
+      if (c.kind === 'unknown' && (c.sharers.size < 2 || !slugTitle(c.url))) continue;
+      // Not read yet: show it only if the address itself reads like a headline.
+      if (c.kind === 'pending' && !slugTitle(c.url)) continue;
+      const r = c.rec || {};
+      const pks = [...c.sharers.keys()].sort((a, b) => c.sharers.get(b) - c.sharers.get(a));
+      c.f.d = [...c.sharers.values()].reduce((a, b) => a + b, 0);
+      c.f.m = r.image ? 1 : 0;
+      // Best note first: comments before bare shares, circle before others.
+      const notes = c.notes.sort((a, b) => (a.bare || 0) - (b.bare || 0) || (c.sharers.get(b.pubkey) || 0) - (c.sharers.get(a.pubkey) || 0)).slice(0, 4);
+      stories.push({
+        id: c.sig, url: c.url, sig: c.sig, pubkey: pks[0], site: r.site || siteOf(r.url || c.url),
+        created_at: Math.max(...c.notes.map((n) => n.created_at), 0) || now() - Math.round(c.f.a * H),
+        sharers: pks.slice(0, 8), shared: pks.length, inCircle: pks.filter((pk) => g.follows.has(pk) || pk === cfg.owner).length, notes: notes.map(({ bare, ...n }) => n),
+        meta: c.rec && !c.rec.failed ? { site: r.site, title: r.title, tldr: r.tldr?.[0] || r.description?.slice(0, 200) || '', readMinutes: r.readMinutes, image: r.image, icon: r.icon }
+          : { site: siteOf(c.url), title: slugTitle(c.url), tldr: '', readMinutes: null, image: null, icon: null, pending: c.rec ? 0 : 1 },
+        f: c.f,
+      });
+    }
+    for (const d of dev.values()) d.pubkey = d.sharers[0];
+    return { stories, dev: [...dev.values()].sort((a, b) => b.sharers.length - a.sharers.length || b.created_at - a.created_at) };
+  }
+
+  /** Queue this window's links for a background read (called after each sync). */
+  function warmLinks() { if (links) linkStories(72); }
+
   const builders = {
     circle() {
       const items = top(circleItems(), 150);
@@ -231,22 +313,12 @@ export function makeFeed({ cfg, store, ingest, signer }) {
       return { items };
     },
     news() {
-      const items = circleItems(72).filter((it) => it.links.length);
-      const clusters = new Map();
-      for (const it of items) for (const l of it.links) {
-        const k = l.url.replace(/^https:\/\/(www\.)?/, '').replace(/\/$/, '');
-        if (!clusters.has(k)) clusters.set(k, { url: l.url, sig: l.sig, sharers: [], notes: [], f: { ...it.f, ce: 0 } });
-        const c = clusters.get(k);
-        if (!c.sharers.includes(it.pubkey)) c.sharers.push(it.pubkey);
-        c.notes.push({ id: it.id, pubkey: it.pubkey, content: it.content.slice(0, 280), created_at: it.created_at });
-        c.f.ce += it.f.ce + (it.f.c ? 1 : 0); c.f.ge += it.f.ge; c.f.z += it.f.z; c.f.a = Math.min(c.f.a, it.f.a); c.f.c = c.f.c || it.f.c; c.f.h = Math.max(c.f.h, it.f.h);
-      }
-      const list = [...clusters.values()].map((c) => ({ ...c, id: c.sig, pubkey: c.sharers[0], created_at: Math.max(...c.notes.map((n) => n.created_at)), sharers: c.sharers.slice(0, 8), notes: c.notes.slice(0, 4) }));
-      const sorted = Rank.rerank(list, Rank.DEFAULTS, { perAuthor: 6 }).slice(0, 60);
+      const { stories, dev } = linkStories(72);
+      const sorted = Rank.rerank(stories, Rank.DEFAULTS, { perAuthor: 2, by: 'site' }).slice(0, 60);
       const curators = store.getByFilters({ kinds: [30004], authors: [...g.follows], limit: 40 })
         .map((e) => ({ id: e.id, pubkey: e.pubkey, title: (tag(e, 'title') || tag(e, 'd') || '').slice(0, 80), size: e.tags.filter((t) => t[0] === 'a' || t[0] === 'e').length }))
         .filter((c) => c.size > 0).slice(0, 12);
-      return { clusters: sorted, curators };
+      return { clusters: sorted, curators, dev: dev.slice(0, 6) };
     },
     watch() {
       const vids = candidates([1, 21, 22], 7 * 24, [cfg.owner, ...g.follows, ...g.hop2.keys()])
@@ -255,7 +327,8 @@ export function makeFeed({ cfg, store, ingest, signer }) {
       const live = store.getByFilters({ kinds: [30311], authors: [...g.follows], since: now() - 12 * H, limit: 50 })
         .filter((e) => tag(e, 'status') === 'live')
         .map((e) => ({ id: e.id, pubkey: e.pubkey, created_at: e.created_at, title: (tag(e, 'title') || 'Live').slice(0, 120), image: tag(e, 'image')?.startsWith('https://') ? signer.img(tag(e, 'image'), 640) : null, viewers: Number(tag(e, 'current_participants')) || null, f: { c: 1, a: 0, ce: 0, ge: 0, z: 0 } }));
-      return { items: top(vids.map((e) => item(e, eng, new Map())), 60), live };
+      const shared = Rank.rerank(linkStories(72, 'video').stories, Rank.DEFAULTS, { perAuthor: 2, by: 'site' }).slice(0, 8);
+      return { items: top(vids.map((e) => item(e, eng, new Map())), 60), live, shared };
     },
     listen() {
       const evs = candidates([1], 7 * 24, [cfg.owner, ...g.follows, ...g.hop2.keys()])
@@ -284,7 +357,7 @@ export function makeFeed({ cfg, store, ingest, signer }) {
   function section(name) {
     if (!SECTIONS.includes(name)) throw Object.assign(new Error('unknown section'), { status: 400 });
     const out = builders[name]();
-    const all = [...(out.items || []), ...(out.read || []), ...(out.watch || []), ...(out.clusters || []), ...(out.news || []), ...(out.hero ? [out.hero] : [])];
+    const all = [...(out.items || []), ...(out.read || []), ...(out.watch || []), ...(out.clusters || []), ...(out.news || []), ...(out.shared || []), ...(out.dev || []), ...(out.hero ? [out.hero] : [])];
     const extra = [...(out.live || []), ...(out.highlights || []), ...(out.curators || [])].map((x) => x.pubkey);
     return { section: name, ...out, profiles: withProfiles(all, extra), quoted: quoted(all), graph: { follows: g.follows.size, hop2: g.hop2.size, updated: g.updated }, generated: now() };
   }
@@ -357,5 +430,5 @@ export function makeFeed({ cfg, store, ingest, signer }) {
     };
   }
 
-  return { section, thread, note, author, signal, profile, SECTIONS };
+  return { section, thread, note, author, signal, profile, warmLinks, SECTIONS };
 }
