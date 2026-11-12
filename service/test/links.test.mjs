@@ -7,7 +7,7 @@ import { HibikiEventDatabase } from '../src/eventdb.mjs';
 import { hostKind, storyKey, sameSite, siteOf, classify, canonicalOf, makeLinks } from '../src/links.mjs';
 import { makeFeed, commentLen, slugTitle, Rank, headWords, sameEvent } from '../src/feed.mjs';
 import { makeSigner } from '../src/signer.mjs';
-import { parseOg, ytId, makeProxies } from '../src/proxy.mjs';
+import { parseOg, ytId, makeProxies, cleanTitle } from '../src/proxy.mjs';
 
 test('host kinds: videos, code, social, shops and shorteners are known without a fetch', () => {
   assert.equal(hostKind('https://www.youtube.com/watch?v=x'), 'video');
@@ -113,6 +113,30 @@ test('rerank can cap on a field other than the author', () => {
   assert.ok(out.slice(0, 3).some((x) => x.id === 4), 'the other site gets a top-three slot');
   assert.equal(out.at(-1).site, 'a', 'the third story from one site goes last');
   assert.ok(Rank.score({ c: 1, d: 1 }) > Rank.score({ c: 1, d: 0.35 }), 'a comment beats a bare share');
+});
+
+test('shop pages that call themselves articles are shops (v0.2.14)', () => {
+  const now = Date.parse('2026-11-12T12:00:00Z'), pub = '2026-11-11T09:00:00Z';
+  const page = '<meta property="og:type" content="article"><title>| Proof of Ink</title>' + '<a class="add_to_cart_button">Add to cart</a>'.repeat(3);
+  const og = parseOg(page, 'https://ink.example/stackchain-magazine');
+  assert.equal(og.cart, true, 'three cart buttons are noticed');
+  assert.equal(parseOg('<meta property="og:type" content="article"><p>Add to cart</p>', 'https://a.example/x').cart, false, 'one stray button is not a shop');
+  assert.equal(classify('https://ink.example/stackchain-magazine', { ...og, published: pub }, now), 'shop');
+  assert.equal(classify('https://ink.example/m', { ogType: 'article', published: pub, tldr: ['Stackchain Magazine 4-6 Add to cart $63.00'] }, now), 'shop', 'cached previews: the summary gives it away');
+  assert.equal(classify('https://news.example/2026/11/a-real-story-here', { ogType: 'article', published: pub, tldr: ['Prices rose again.'] }, now), 'article');
+});
+
+test('titles drop the site name and stray separators, never the headline (v0.2.14)', () => {
+  const c = (t, site, host) => cleanTitle(t, site, `https://${host}/x`);
+  assert.equal(c('Wegen Steuererhöhungen: Aufstand - Apollo News', 'Apollo News', 'apollo-news.net'), 'Wegen Steuererhöhungen: Aufstand');
+  assert.equal(c('Bitcoin vs Stocks | bitcoin.rocks', 'bitcoin.rocks', 'bitcoin.rocks'), 'Bitcoin vs Stocks');
+  assert.equal(c('| Proof of Ink', 'proofofink.com', 'proofofink.com'), 'Proof of Ink');
+  assert.equal(c('The TikTok to OnlyFans Pipeline | CEASE report', 'CEASE', 'cease.org.uk'), 'The TikTok to OnlyFans Pipeline');
+  assert.equal(c('Cyberattack Took 7 Minutes \u2014 BigGo Finance', 'BigGo Finance', 'finance.biggo.com'), 'Cyberattack Took 7 Minutes');
+  assert.equal(c('BBC News - Storm hits Cornwall', 'BBC News', 'www.bbc.co.uk'), 'Storm hits Cornwall');
+  assert.equal(c('Bitcoin - the next decade', 'Bitcoin Magazine', 'bitcoinmagazine.com'), 'Bitcoin - the next decade', 'a leading word that only starts the site name stays');
+  assert.equal(c('Yahoo Finance', 'Yahoo Finance', 'finance.yahoo.com'), 'Yahoo Finance', 'a title that is only the site name is kept');
+  assert.equal(c('Fish-and-chips prices rise', 'Fish', 'fish.example'), 'Fish-and-chips prices rise', 'hyphens inside words are not separators');
 });
 
 test('a site you trust ranks higher and says why; stories cap by domain (v0.2.13)', () => {

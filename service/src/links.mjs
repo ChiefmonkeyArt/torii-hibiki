@@ -76,7 +76,8 @@ export function classify(url, meta, now = Date.now()) {
   let x;
   try { x = new URL(final); } catch { return 'page'; }
   const og = (meta.ogType || '').toLowerCase(), ld = meta.ld || [];
-  if (og === 'product' || meta.price || ld.some((t) => /^(Product|SoftwareApplication|MobileApplication|WebApplication)$/.test(t))) return 'shop';
+  const text = (meta.tldr || []).join(' ') + ' ' + (meta.description || '');
+  if (og === 'product' || meta.price || meta.cart || /\badd to (cart|basket|bag)\b/i.test(text) || ld.some((t) => /^(Product|SoftwareApplication|MobileApplication|WebApplication)$/.test(t))) return 'shop';
   if (og.startsWith('music') || ld.some((t) => /^(MusicRecording|MusicAlbum|PodcastEpisode|PodcastSeries)$/.test(t))) return 'audio';
   if (og === 'book' || ld.some((t) => NOT_ARTICLE_LD.test(t))) return 'page';
   if (NOT_ARTICLE_HOST.test(x.hostname) || NOT_ARTICLE_PATH.test(x.pathname)) return 'page';
